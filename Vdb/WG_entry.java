@@ -35,6 +35,7 @@ public class WG_entry implements Serializable, Cloneable, Comparable
 
   public double   poisson_midpoint = 0;
   public double   seekpct;            /* How often do we seek?                       */
+  public boolean  seek_start0 = true;
   public long     stride_min = -1;    /* Minimum to add when generating a random lba */
   public long     stride_max = -1;    /* Maximum for same.                           */
 
@@ -71,13 +72,12 @@ public class WG_entry implements Serializable, Cloneable, Comparable
 
   public boolean   suspend_fifo_use = false;
 
-  private   Random  seek_randomizer;
+  public Random  seek_randomizer;
 
   public transient Cmd_entry pending_cmd; /* CMD entry waiting to be picked in WT */
 
   WG_context hcontext = new WG_context();  /* File context for hits and misses*/
   WG_context mcontext = new WG_context();
-
 
   long     ios_on_the_way = 0;
   long     ios_started = 0;       //debug only
@@ -171,6 +171,15 @@ public class WG_entry implements Serializable, Cloneable, Comparable
     wg_name  = "rd=" + rd.rd_name + ",wd=" + wd.wd_name + ",sd=" + sd.sd_name +
                ",lun=" + lun + forxx +
                "' " + ((seekpct <=0) ? "seq" : "rnd");
+
+    /* Remember that we need a WD report: */
+    if (wd.wd_name.startsWith(SD_entry.SD_FORMAT_NAME))
+      wd.wd_is_used = false;
+    else if (wd.wd_name.startsWith("rd="))
+      wd.wd_is_used = false;
+    else
+      wd.wd_is_used = true;
+
     return this;
   }
 
@@ -217,7 +226,7 @@ public class WG_entry implements Serializable, Cloneable, Comparable
    * Lower the amount of sequential files that terminate after eof.
    * When set to '-1' there are NO files to monitor.
    */
-  public static void sequentials_lower()
+  public void sequentials_lower()
   {
     synchronized(seq_lock)
     {
@@ -484,6 +493,7 @@ public class WG_entry implements Serializable, Cloneable, Comparable
     if (mcontext.seek_width < max_xfersize)
       size_error(mcontext);
 
+
     /* Truncation of seek_high has been removed. If I recall correctly this    */
     /* was only in place to get around boundary cases, trying to access beyond */
     /* EOF. Those problems by now should have all been resolved.               */
@@ -509,6 +519,10 @@ public class WG_entry implements Serializable, Cloneable, Comparable
     /* I'd be just lying to the user.                                          */
     /* So, an other flipflop, I could be a politician.                         */
     /* Maybe fix the REAL problem some day? Politicians NEVER do that though!  */
+
+    /* With multi-io gone these arguments may no longer be valid.              */
+    /* On Feb 18 2018 I noticed that when trying to create a 10k file I end up */
+    /* with only 8k. This needs to be fixed some day....                       */
 
     mcontext.seek_low  = ownmath.round_lower(mcontext.seek_low,  max_xfersize);
     mcontext.seek_high = ownmath.round_lower(mcontext.seek_high, max_xfersize);
@@ -566,6 +580,7 @@ public class WG_entry implements Serializable, Cloneable, Comparable
         print_sizes();
         BoxPrint box = new BoxPrint();
         box.add("");
+        box.add("rd=%s %s", rd.rd_name, rd.current_override.getText());
         box.add("Data Validation has some extra SD size requirements. ");
         box.add("The internal queue depth of Vdbench is %d for an uncontrolled maximum i/o rate, ", fifo_size);
         box.add("and twice that, %d, for all other workloads." , fifo_size * 2);
@@ -789,7 +804,7 @@ public class WG_entry implements Serializable, Cloneable, Comparable
     /* Set next sequential address for first time. */
     if (context.next_seq < 0)
     {
-      if (common.get_debug(common.FIRST_SEQ_SEEK_RANDOM))
+      if (!seek_start0)
       {
         blockBoundarySeek(context, cmd);
         context.next_seq = cmd.cmd_lba;
@@ -936,7 +951,7 @@ public class WG_entry implements Serializable, Cloneable, Comparable
       if (Validate.isRealValidate() && seekpct < 0 && readpct == 100)
       {
         /* Get Keys, but skip block when any key block in the data block is in error: */
-        if (!key_map.storeDataBlockInfo(cmd.cmd_lba, cmd.cmd_xfersize, cmd.sd_ptr.dv_map))
+        if (key_map.storeDataBlockInfo(cmd.cmd_lba, cmd.cmd_xfersize, cmd.sd_ptr.dv_map))
         {
           reason2++;
           continue;
@@ -965,7 +980,7 @@ public class WG_entry implements Serializable, Cloneable, Comparable
       if (Validate.isRealValidate())
       {
         /* Get Keys, but skip block when any key block in the data block is in error: */
-        if (!key_map.storeDataBlockInfo(cmd.cmd_lba, cmd.cmd_xfersize, cmd.sd_ptr.dv_map))
+        if (key_map.storeDataBlockInfo(cmd.cmd_lba, cmd.cmd_xfersize, cmd.sd_ptr.dv_map))
         {
           reason4++;
           continue;
@@ -1205,6 +1220,10 @@ public class WG_entry implements Serializable, Cloneable, Comparable
 
       new WG_task(new Task_num("WG_task"), wg).start();
       count ++;
+
+      if (common.get_debug(common.PTOD_WG_STUFF))
+        common.plog("Starting Workload Generator thread %3d for %s,sd=%s,skew=%.3f",
+                    count, wg.wd_name, wg.sd_used.sd_name, wg.skew);
     }
 
     common.plog("Started %d Workload Generator threads.", count);
@@ -1412,12 +1431,17 @@ public class WG_entry implements Serializable, Cloneable, Comparable
     /* Store values requested by WD, or use overrides from RD: */
     readpct          = wd_used.readpct;
     seekpct          = wd_used.seekpct;
+    seek_start0      = wd_used.seek_start0;
     poisson_midpoint = wd_used.poisson_midpoint;
     stride_min       = wd_used.stride_min;
     stride_max       = wd_used.stride_max;
     wd_name          = wd_used.wd_name;
     rhpct            = wd_used.rhpct;
     whpct            = wd_used.whpct;
+
+    if (stride_min >= 0 && seekpct <= 0)
+      common.failure("stride=(min,max) not supported when doing pure sequential "+
+                     "I/O (seek=eof or seek=seq). Specify seek=nn");
 
     setXfersizes(wd_used.xf_table);
 
@@ -1457,32 +1481,30 @@ public class WG_entry implements Serializable, Cloneable, Comparable
 
     /* Look at all slaves: */
     int adjusts = 0;
+    ArrayList <WG_entry> workloads = Host.getAllWorkloads();
     for (int i = 0; i < SlaveList.getSlaveCount(); i++)
     {
       Slave slave = (Slave) SlaveList.getSlaveList().elementAt(i);
 
       /* Calculate the total skew for this slave: */
       double total_skew = 0;
-      for (int j = 0; j < Host.getAllWorkloads().size(); j++)
+      for (WG_entry wg : workloads)
       {
-        WG_entry wg = Host.getAllWorkloads().get(j);
-        if (wg.slave.getHost().getLabel().equals(slave.getHost().getLabel()))
+         if (wg.slave.getHost().getLabel().equals(slave.getHost().getLabel()))
         {
           total_skew += wg.skew;
           //common.ptod("slave: %s %-15s %7.2f %7.2f", slave.getLabel(), wg.wd_name , wg.skew, total_skew);
         }
       }
 
-      int IOS_PER_JVM  = 100000;
-      int DEFAULT_JVMS = 8;
 
       /* Figure out if this is too many iops: */
       double iorate = rd.iorate_req * total_skew / 100;
       //common.ptod(slave.getLabel() + " iorate: " + iorate + " " + total_skew + " " + rd.iorate);
-      if (iorate > IOS_PER_JVM)
+      if (iorate >  RD_entry.IOS_PER_JVM)
       {
-        int jvms = (int) Math.min((iorate + IOS_PER_JVM - 1)
-                                  / IOS_PER_JVM, DEFAULT_JVMS);
+        int jvms = (int) Math.min((iorate +  RD_entry.IOS_PER_JVM - 1)
+                                  /  RD_entry.IOS_PER_JVM, RD_entry.DEFAULT_JVMS);
 
         /* But never more than the amount of SDs: */
         /* (If the user wants more than one JVM for an SD, he must use jvms= parameter) */
@@ -1541,8 +1563,8 @@ public class WG_entry implements Serializable, Cloneable, Comparable
                            "rdpct=%3d "    +
                            "seek=%3d "    +
                            "rh=%3d "    +
-                           "skew=%6.2f "  +
-                           "th=%d ",
+                           "skew=%7.3f "  +
+                           "th=%d ",         // threads on slave
                            slave.getLabel(),
                            wd_name,
                            sd_used.sd_name,
@@ -1560,7 +1582,7 @@ public class WG_entry implements Serializable, Cloneable, Comparable
                            sd_mask      +
                            "rdpct=%3d "    +
                            "seek=%3d "    +
-                           "skew=%6.2f " ,
+                           "skew=%7.3f " ,
                            slave.getLabel(),
                            wd_name,
                            sd_used.sd_name,
@@ -1708,10 +1730,18 @@ public class WG_entry implements Serializable, Cloneable, Comparable
    * which that Slave's Host was defined in the parameter file.
    */
   private static String sort_by = null;
+  private static long  sorts = 0;
   public static ArrayList <WG_entry> sortWorkloads(ArrayList <WG_entry> list, String by)
   {
     sort_by = by;
     Collections.sort(list);
+
+    //if (++sorts % 100000 == 0)
+    //{
+    //  common.ptod("sorts: %,12d", sorts);
+    //  common.where(8);
+    //}
+
     return list;
   }
 

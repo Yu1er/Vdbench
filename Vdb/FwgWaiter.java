@@ -246,6 +246,9 @@ class FwgQueue
   Semaphore max_queue_sema  = new Semaphore(MAX_QUEUE_SEMA_SIZE);
   int       releases = 0;
 
+
+  private static boolean bypass_waiter = common.get_debug(common.BYPASS_FWGWAITER);
+
   public FwgQueue(FwgEntry f, double rate, int dist, int seq_in)
   {
     fwg          = f;
@@ -351,8 +354,10 @@ class FwgQueue
    */
   public int getPermit() throws InterruptedException
   {
-    //if (suspended)
-    //  return 5678;
+    /* To quickly handle the fact that the FWG code does not allow uncontrolled max: */
+    if (bypass_waiter)
+      return 0;
+
     int depth = max_queue_sema.availablePermits();
     FwgWaiter.getUntilDone(work_avail_sema, "work_avail_sema " + fwg.fsd_name);
     max_queue_sema.release();

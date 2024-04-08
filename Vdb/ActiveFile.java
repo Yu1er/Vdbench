@@ -156,7 +156,7 @@ class ActiveFile
     }
 
     if (print_open_flags)
-      common.ptod("openFile  flags: %s %s", active_fwg.open_flags, full_name);
+      common.ptod("openFile flags: %s read: %-5b %s", active_fwg.open_flags, read, full_name);
 
     /* Now open the file: */
     if ((fhandle = Native.openFile(full_name, active_fwg.open_flags, (read) ? 0 : 1)) < 0)
@@ -196,7 +196,19 @@ class ActiveFile
     if (!SlaveWorker.work.format_run && active_fwg.sequential_io && active_fwg.stopafter != Long.MAX_VALUE)
     {
       if (fe.getCurrentSize() != fe.getReqSize())
-        next_lba = fe.getCurrentSize();
+      {
+        /* For writes: continue expanding file: */
+        if (!read)
+          next_lba = fe.getCurrentSize();
+
+        /* For reads, if we stopped earlier before the end, continue: */
+        else if (fe.getLastLba() < fe.getCurrentSize())
+          next_lba = fe.getLastLba();
+
+        /* For the rest, just start at the beginning: */
+        else
+          next_lba = 0;
+      }
       else
       {
         if (fe.getLastLba() >= fe.getCurrentSize())
@@ -205,6 +217,16 @@ class ActiveFile
           next_lba = fe.getLastLba();
       }
       //common.ptod("fe.getCurrentSize(): " + fe.getCurrentSize() + " " + fe.getReqSize() + " " + next_lba);
+    }
+
+    /* fileio=seqnz is only honored for FULL files: */
+    if (fe.getCurrentSize() == fe.getReqSize() &&
+        active_fwg.sequential_io &&
+        !active_fwg.seq_io_start0)
+    {
+      xfersize = active_fwg.getXferSize();
+      if (!setNextRandomLba())
+        next_lba = 0;
     }
   }
 
@@ -322,7 +344,7 @@ class ActiveFile
 
       /* Get the list of keys. Used for both read and writes.             */
       /* if ANY portion of the block is bad, we'll skip it and try again: */
-      if (!key_map.storeDataBlockInfo(next_lba, xfersize, anchor.getDVMap()))
+      if (key_map.storeDataBlockInfo(next_lba, xfersize, anchor.getDVMap()))
       {
         calling_thread.block(Blocked.SKIP_BAD_BLOCKS);
         continue;
@@ -361,7 +383,7 @@ class ActiveFile
       doesBlockOrShorterBlockFit();
 
       /* Get the list of keys. used for both read and writes: */
-      if (!key_map.storeDataBlockInfo(next_lba, xfersize, anchor.getDVMap()))
+      if (key_map.storeDataBlockInfo(next_lba, xfersize, anchor.getDVMap()))
       {
         calling_thread.block(Blocked.SKIP_BAD_BLOCKS);
         return false;
@@ -393,7 +415,7 @@ class ActiveFile
       doesBlockOrShorterBlockFit();
 
       /* Get the list of keys to see if we have bad blocks: */
-      if (key_map.storeDataBlockInfo(next_lba, xfersize, anchor.getDVMap()))
+      if (!key_map.storeDataBlockInfo(next_lba, xfersize, anchor.getDVMap()))
         return true;
 
       calling_thread.block(Blocked.SKIP_BAD_BLOCKS);
@@ -454,20 +476,25 @@ class ActiveFile
         /* (A block with an error will NOT be reread)                            */
         if (key_map.anyDataToCompare())
         {
-          readAndValidate(Validate.FLAG_PRE_READ);
-          key_map.saveTimestamp(Timestamp.PRE_READ);
+          /* ONLY validate when we know the complete block exists: */
+          if (next_lba + xfersize < fe.getCurrentSize())
+          {
+            readAndValidate(Validate.FLAG_PRE_READ);
+            key_map.saveCurrentTod(Timestamp.PRE_READ);
+          }
         }
       }
 
       /* Write the block with Data Valition keys: */
-      dataValidationWrite();
-      key_map.saveTimestamp(Timestamp.WRITE);
+      long tod = dataValidationWrite();
+      key_map.saveTimestamp(Timestamp.WRITE, tod);
+      key_map.saveWriteXfer(xfersize);
 
-      /* Make sure the data is OK right now? */
-      if (Validate.isImmediateRead())
+      /* Make sure the data is OK right now? (The write above could have marked it BAD */
+      if (Validate.isImmediateRead() && !key_map.badDataBlock())
       {
         readAndValidate(Validate.FLAG_READ_IMMEDIATE);
-        key_map.saveTimestamp(Timestamp.READ_IMMED);
+        key_map.saveCurrentTod(Timestamp.READ_IMMED);
       }
     }
 
@@ -496,16 +523,18 @@ class ActiveFile
           fileError("Write error", rc);
           return;
         }
-
       }
     }
+
+    if (print_file_io)
+      common.ptod("writeBlock: %12d %7d %s", next_lba, xfersize, fe.getFullName());
   }
 
 
   /**
    * Write after storing a data pattern.
    */
-  private boolean writeWithPattern()
+  private long writeWithPattern()
   {
     if (Dedup.isDedup())
       anchor.dedup.dedupFsdBlock(this);
@@ -516,11 +545,13 @@ class ActiveFile
     if (key_map.pattern_length == 0)
       common.failure("zero pattern length");
 
+    int fail_write = (HelpDebug.doAfterCount("failWrite")) ? Validate.FLAG_FAIL_WRITE : 0;
+
     long start_tod = Native.get_simple_tod();
     long tod       = (Validate.isRealValidate()) ? System.currentTimeMillis() : 0;
     long rc  = Native.multiKeyFillAndWriteBlock(fhandle,
                                                 tod,
-                                                data_flag,
+                                                data_flag | fail_write,
                                                 file_start_lba,
                                                 next_lba,
                                                 xfersize,
@@ -535,7 +566,7 @@ class ActiveFile
     if (rc != 0)
     {
       fileError("Write error", rc);
-      return false;
+      return 0;
     }
 
     if (HelpDebug.doAfterCount("corruptAfterWrite"))
@@ -553,7 +584,7 @@ class ActiveFile
     blocks_done   ++;
     bytes_done += xfersize;
 
-    return true;
+    return tod;
   }
 
 
@@ -615,7 +646,7 @@ class ActiveFile
       if (pending_flag == DV_map.PENDING_KEY_REREAD)
       {
         /* Asynchronously BadSector may have reset the keys, so get them again: */
-        if (!key_map.storeDataBlockInfo(next_lba, xfersize, anchor.getDVMap()))
+        if (key_map.storeDataBlockInfo(next_lba, xfersize, anchor.getDVMap()))
           common.failure("Block should not be in error");
 
         ErrorLog.plog("Re-checking file %s lba 0x%08x because of PENDING_KEY_REREAD",
@@ -668,7 +699,7 @@ class ActiveFile
   /**
    * Write a block containing Data Validation key values.
    */
-  private void dataValidationWrite()
+  private long dataValidationWrite()
   {
     if (Dedup.isDedup())
       anchor.dedup.dedupFsdBlock(this);
@@ -680,7 +711,7 @@ class ActiveFile
       if (!key_map.incrementKeys())
       {
         calling_thread.block(Blocked.SKIP_WRITE);
-        return;
+        return 0;
       }
     }
 
@@ -688,8 +719,9 @@ class ActiveFile
     if (Validate.isJournaling())
       key_map.writeBeforeJournalImage();
 
-    if (!writeWithPattern())
-      return;
+    long tod = writeWithPattern();
+    if (tod == 0)
+      return 0;
 
     /* Write post-keys to Journal: */
     if (Validate.isJournaling())
@@ -700,6 +732,8 @@ class ActiveFile
 
     /* After a write is done update the keys in the DV_map: */
     key_map.storeKeys();
+
+    return tod;
   }
 
 
@@ -725,12 +759,15 @@ class ActiveFile
 
     /* Keep track of the amount of errors (code will abort if needed): */
     common.ptod(txt);
+    ErrorLog.ptod(txt);
 
     /* Give some time for the above ptod() to arrive on the master before */
     /* a possible abort: */
+    // There is a problem here: real i/o errors or DV errors already have been counted!
+    // This therefore should only be needed for open/close etc errors.
+    // TBD leave for now.
     common.sleep_some(100);
-    ErrorLog.countErrorsOnSlave(full_name, next_lba, (int) xfersize);
-
+    ErrorLog.countErrorsOnSlave(1);
   }
 
 
@@ -740,6 +777,7 @@ class ActiveFile
    * If we are reading a block whose keys are all zeros, the block will not be
    * compared at all.
    */
+  private static boolean print_file_io = common.get_debug(common.PRINT_FILE_IO);
   protected void readBlock()
   {
     if (native_read_buffer == 0)
@@ -759,7 +797,7 @@ class ActiveFile
         readAndValidate(Validate.FLAG_PENDING_READ);
       else
         readAndValidate(Validate.FLAG_NORMAL_READ);
-      key_map.saveTimestamp(Timestamp.READ_ONLY);
+      key_map.saveCurrentTod(Timestamp.READ_ONLY);
     }
 
     else
@@ -772,6 +810,9 @@ class ActiveFile
       if (rc != 0)
         fileError("Read error", rc);
     }
+
+    if (print_file_io)
+      common.ptod("readBlock:  %12d %7d %s", next_lba, xfersize, fe.getFullName());
 
     blocks_done ++;
     bytes_done  += xfersize;

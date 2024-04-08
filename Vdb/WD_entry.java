@@ -47,6 +47,7 @@ public class WD_entry implements Cloneable, Serializable
                                /* 100: pure reandom                           */
                                /*   0: pure sequential                        */
                                /*  -1: seek=eof, pure sequential              */
+  boolean  seek_start0 = true;
   long     stride_min = -1;    /* Minimum to add when generating a random lba */
   long     stride_max = -1;    /* Maximum for same.                           */
 
@@ -60,6 +61,9 @@ public class WD_entry implements Cloneable, Serializable
 
   boolean  one_slave_warning_given = false;
 
+  /* This basically should be called 'wd_report_needed' */
+  boolean  wd_is_used = false;
+
   OpenFlags  open_flags = null;
 
   String[] user_class_parms = null;
@@ -67,8 +71,10 @@ public class WD_entry implements Cloneable, Serializable
   private static boolean any_hotbands_requested = false;
 
   static   WD_entry dflt = new WD_entry();
-  static   int max_wd_name = 0;
+  static   int max_wd_name = 1;
 
+  int      starting_slave = 0;
+  int      sds_added      = 0;
 
 
   /**
@@ -342,8 +348,12 @@ public class WD_entry implements Cloneable, Serializable
   {
     for (String parm : prm.raw_values)
     {
-      if ("sequential".startsWith(parm))
+      if (parm.startsWith("seq"))
+      {
         seekpct = 0;
+        if (parm.contains("nz"))
+          seek_start0 = false;
+      }
 
       else if (parm.equalsIgnoreCase("eof"))
         seekpct = -1;
@@ -558,6 +568,21 @@ public class WD_entry implements Cloneable, Serializable
                          "workloads that do NOT specify iorate=");
       }
     }
+  }
+
+  /**
+   * See if this workload is used during the current Run Definition.
+   * This prevents statistics to be reported in a WD report if this WD is
+   * currently NOT in use.
+   */
+  public boolean isWdUsedThisRd()
+  {
+    for (WD_entry wd : RD_entry.next_rd.wds_for_rd)
+    {
+      if (wd == this)
+        return true;
+    }
+    return false;
   }
 }
 

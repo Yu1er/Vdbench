@@ -38,6 +38,10 @@ abstract class FwgThread extends Thread
   private   long    native_read_buffer  = 0;
   private   long    native_write_buffer = 0;
 
+  public    long    permit_last = 0;
+  public    long    permit_time = 0;
+  public    long    permit_tod  = 0;
+
 
   protected boolean format;
   protected boolean format_restart;
@@ -62,6 +66,7 @@ abstract class FwgThread extends Thread
   private   static Object shutdown_lock = new Object();
 
   private   static boolean fast_block_kill = common.get_debug(common.FAST_BLOCK_KILL);
+  private   static boolean report_permits  = common.get_debug(common.REPORT_FWG_PERMITS);
   private   static int BLOCK_KILL = (fast_block_kill) ? 100 : 10000;
   private   static int thread_number = 0;
 
@@ -171,7 +176,7 @@ abstract class FwgThread extends Thread
       tn.waitForMasterGo();
 
       /* A format run may have to delete some old files: */
-      if (/* format && */ fwg.anchor.isDeletePending())
+      if (fwg.anchor.isDeletePending())
         fwg.anchor.cleanupOldFiles(fwg);
 
       /* Large workload loop: */
@@ -193,7 +198,18 @@ abstract class FwgThread extends Thread
         {
           try
           {
-            queue.getPermit();
+            /* This code here allows a user to report how busy a thread is.  */
+            /* This gets very helpful when one or more threads are throttled */
+            /* because of a 'controlled' workload.                           */
+            /* Info will be reported at the end of each detail line.         */
+            if (!report_permits)
+              queue.getPermit();
+            else
+            {
+              long start = System.nanoTime();
+              queue.getPermit();
+              permit_time += (System.nanoTime() - start);
+            }
             //common.ptod("queue: " + queue.fwg.fsd_name + " " + queue.fwg.getOperation() + " " +  queue.releases);
           }
           catch (InterruptedException e)
@@ -204,7 +220,11 @@ abstract class FwgThread extends Thread
 
         if (!doOperation())
         {
-          FwgWaiter.getMyQueue(fwg).suspendFwg();
+          /* The 'suspend' below here prevented a thread like OPWrite from */
+          /* finishing the file that he was writing. */
+          /* With that, FwgWaiter.run ended up being stuck in a loop when */
+          /* there were no other Fwg's running. */
+          //FwgWaiter.getMyQueue(fwg).suspendFwg();
           break;
         }
 
@@ -868,6 +888,15 @@ abstract class FwgThread extends Thread
     if (reason == Blocked.FILE_MUST_EXIST &&
         (fwg.getOperation() == Operations.COPY ||
          fwg.getOperation() == Operations.MOVE))
+      return;
+
+    /* 'operation=delete' that is restarted has a valid reason for this many blocks: */
+    /* Worse: I did a trainload of sleeps before I died..... */
+    /* But what if there is a real mixed workload going on e.g. create+delete? */
+    /* I should put in a check like 'am I the only one? */
+    /* How about sleeping every 'n'? or have the caller decide to sleep? */
+    if (reason == Blocked.FILE_MUST_EXIST &&
+        (fwg.getOperation() == Operations.DELETE))
       return;
 
     //if (format && reason == Blocked.FILE_MAY_NOT_EXIST)

@@ -1,12 +1,12 @@
 package Utils;
-    
-/*  
- * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved. 
- */ 
-    
-/*  
- * Author: Henk Vandenbergh. 
- */ 
+
+/*
+ * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.
+ */
+
+/*
+ * Author: Henk Vandenbergh.
+ */
 
 import java.io.IOException;
 import java.io.ObjectInputStream;
@@ -18,8 +18,8 @@ import java.util.*;
  */
 public class LookupAnchor  implements java.io.Serializable
 {
-  private final static String c = 
-  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved."; 
+  private final static String c =
+  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.";
 
   private String  anchor_label = null;
   private String  anchor_type  = null;
@@ -45,13 +45,29 @@ public class LookupAnchor  implements java.io.Serializable
   {
     anchor_type  = type;
     anchor_label = label;
-    anchor_name  = class_name + "/" + label;
+    if (label == null & type == null)
+      anchor_name = class_name;
+    else
+      anchor_name  = class_name + "/" + label;
 
     if (anchor_name_list.get(anchor_name) != null)
       common.failure("New LookupAnchor(): duplicate definition of " + anchor_name);
     anchor_name_list.put(anchor_name, this);
   }
 
+  public static LookupAnchor findAnchor(String anc_name)
+  {
+    LookupAnchor anchor = (LookupAnchor) anchor_name_list.get(anc_name);
+
+    if (anchor == null)
+    {
+      //String[] list = (String[]) anchor_name_list.keySet().toArray(new String[0]);
+      //for (int i = 0; i < list.length; i++)
+      //  common.ptod("findAnchor not found: " + anc_name + " " + list[i]);
+    }
+
+    return anchor;
+  }
 
   public static LookupAnchor findAnchor(String anc_name, String label)
   {

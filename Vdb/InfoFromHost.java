@@ -85,7 +85,7 @@ public class InfoFromHost implements Serializable
    */
   public static void askHostsForStuff()
   {
-    Status.printStatus("Query host configuration started", null);
+    Status.printStatus("Query host configuration started");
 
     hosts_with_work = new HashMap(4);
     Vector list     = null;
@@ -225,7 +225,7 @@ public class InfoFromHost implements Serializable
     if (host_names.length > 0)
       waitForAllHosts();
 
-    Status.printStatus("Query host configuration completed", null);
+    Status.printStatus("Query host configuration completed");
   }
 
 
@@ -329,13 +329,15 @@ public class InfoFromHost implements Serializable
     /* Do some mount stuff if needed: */
     SlaveJvm.setMount(host_info.host_mount);
     if (host_info.host_mount != null)
-      host_info.host_mount.mountIfNeeded();
+      host_info.host_mount.initialHostMount();
 
     /* Setup device query from Kstat: */
     if (common.onSolaris() && !common.get_debug(common.NO_KSTAT))
       Native.openKstat();
 
     /* Get information for each requested lun: */
+    Signal signal = new Signal(30);
+    long start = System.currentTimeMillis();
     for (int i = 0; i < host_info.luns_on_host.size(); i++)
     {
       LunInfoFromHost info = (LunInfoFromHost) host_info.luns_on_host.get(i);
@@ -413,6 +415,15 @@ public class InfoFromHost implements Serializable
             devices_this_host.add(devx);
           }
         }
+      }
+
+      /* Warn the user when things are just too slow and cause heartbeat issues: */
+      if (signal.go())
+      {
+        long seconds = (System.currentTimeMillis() - start) / 1000;
+        if (seconds > 5)
+          SlaveJvm.sendMessageToConsole("It has taken %d seconds to get the size of %d SDs/FSDs",
+                                        seconds, i + 1);
       }
     }
 
@@ -777,7 +788,8 @@ public class InfoFromHost implements Serializable
       }
     }
 
-
+    long total = 0;
+    int sds = 0;
     for (int i = 0; i < Vdbmain.sd_list.size(); i++)
     {
       SD_entry sd = (SD_entry) Vdbmain.sd_list.get(i);
@@ -846,6 +858,8 @@ public class InfoFromHost implements Serializable
                   sd.sd_name, sd.lun, sd.psize,
                   (float) sd.psize / (1024.*1024.*1024.),
                   (float) sd.psize / (1000.*1000.*1000.));
+      sds++;
+      total += sd.psize;
 
       if (false)
       {
@@ -857,8 +871,12 @@ public class InfoFromHost implements Serializable
       }
     }
 
-    //common.ptod("lun_size: " + info1.lun_size);
-    //common.ptod("sd.end_lba: " + sd.end_lba);
+    if (sds > 1)
+    {
+      common.plog("");
+      common.plog("Total SD size: %,d bytes; %,.4f GB (1024**3); %,.4f GB (1000**3)",
+                  total, (float) total / (1024.*1024.*1024.), (float) total / (1000.*1000.*1000.));
+    }
   }
 
   public boolean isSolaris()
@@ -955,6 +973,13 @@ public class InfoFromHost implements Serializable
           }
         }
         SlaveJvm.sendMessageToConsole("Created anchor directory: " + lun);
+
+        /* It appears that if a UMOUNT is done right after this create */
+        /* that the mountpoint is busy, hopefully because GC has not cleaned up */
+        /* the File instance used. Force it: */
+        fptr = null;
+        System.gc();
+        System.gc();
       }
     }
   }
@@ -986,6 +1011,12 @@ public class InfoFromHost implements Serializable
    *
    * It of course would have been cleaner to rebuild the Kstat stuff, but why
    * waste hours and hours when a simple fix like this will do?
+   *
+   *
+   *
+   * Confused: I have done clean unmounts while the file below did NOT get
+   * closed. Shall I give up on this no_dismount?
+   *
    */
   private static void checkAutoMount(InfoFromHost host_info)
   {

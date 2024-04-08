@@ -1,12 +1,12 @@
 package Vdb;
-    
-/*  
- * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved. 
- */ 
-    
-/*  
- * Author: Henk Vandenbergh. 
- */ 
+
+/*
+ * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.
+ */
+
+/*
+ * Author: Henk Vandenbergh.
+ */
 
 import java.io.Serializable;
 import java.text.DecimalFormat;
@@ -27,8 +27,8 @@ import Utils.Format;
  */
 public class Histogram implements java.io.Serializable, Cloneable
 {
-  private final static String c = 
-  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved."; 
+  private final static String c =
+  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.";
 
   private long[] counters = null;
 
@@ -153,7 +153,7 @@ public class Histogram implements java.io.Serializable, Cloneable
       return output;
 
     output.add(title);
-    String line = String.format(" %8s <  %10s   %10s %8s %8s  ",
+    String line = String.format(" %8s <  %10s   %11s %8s %8s  ",
                                 "min(ms)", "max(ms)", "count", "%%", "cum%%");
     output.add(line + "'+': Individual%; '+-': Cumulative%" );
     output.add("");
@@ -197,7 +197,7 @@ public class Histogram implements java.io.Serializable, Cloneable
 
 
       String xmax = (branges[i].max == Long.MAX_VALUE) ? "max" : getShort(branges[i].max / 1000., 8);
-      line = String.format(" %8s < %11s %12s %8.4f %8.4f  %s%s",
+      line = String.format(" %8s < %11s %13s %8.4f %8.4f  %s%s",
                            getShort(branges[i].min / 1000., 8),
                            xmax,
                            df.format(counter),

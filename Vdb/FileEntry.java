@@ -25,7 +25,6 @@ public class FileEntry implements Comparable
   private Directory parent          = null;
   private long      req_file_size   = 0;       /* Requested file size      */
   private long      cur_file_size   = 0;       /* Current file size        */
-  private int       file_no         = 0;
   private int       file_no_in_list = 0;       /* Used for copy/move       */
   private int       use_count       = 0;
   private boolean   file_opened     = false;
@@ -64,13 +63,15 @@ public class FileEntry implements Comparable
   * - lba:    relatiove LBA for Data Validation
   * - seqno:  relative file# within the file_list
   */
-  public FileEntry(Directory parent_dir, int no, long size, long lba, int seqno)
+  public FileEntry(Directory parent_dir, long size, long lba, int seqno)
   {
     parent          = parent_dir;
-    file_no         = no;
     req_file_size   = size;
     file_start_lba  = lba;
     file_no_in_list = seqno;
+
+    if (file_no_in_list >= Integer.MAX_VALUE)
+      common.failure("Maximum file number reached, only 31 bits available.");
 
     /* When we have a delete pending in a format run we don't need to */
     /* really understand the current status of the files since they */
@@ -104,6 +105,15 @@ public class FileEntry implements Comparable
             getAnchor().countFullFiles(+1, this);
         }
       }
+
+      else if (common.get_debug(common.ASSUME_FILE_EXISTS))
+      {
+        file_exists   = true;
+        cur_file_size = req_file_size;
+        getAnchor().countFullFiles(+1, this);
+        parent.countFiles(+1, this);
+      }
+
 
       else if (getAnchor().format_complete_used)
       {
@@ -392,13 +402,7 @@ public class FileEntry implements Comparable
 
   public String getShortName()
   {
-    String name;
-    if (!common.get_debug(common.LONGER_FILENAME))
-      name = String.format("vdb_f%04d.file", file_no);
-    else
-      name = String.format("vdb_f%04d.%04d.file", file_no, file_no_in_list);
-
-    //common.ptod("name: " + name);
+    String name = String.format(getAnchor().file_mask, file_no_in_list);
     return name;
   }
 
@@ -468,7 +472,7 @@ public class FileEntry implements Comparable
     getAnchor().countExistingFiles(-1, this);
 
     if (Validate.isValidate())
-      getAnchor().allocateKeyMap(file_start_lba).clearMapForFile(req_file_size);
+      getAnchor().allocateKeyMap(file_start_lba).clearMapForFile(req_file_size, getAnchor().getDVMap());
     if (debug)
       common.ptod("deleted: " + getFullName());
   }
@@ -481,7 +485,12 @@ public class FileEntry implements Comparable
   }
   public String toString()
   {
-    return "FileEntry: " + getFullName() + " busy: " + isBusy();
+    return String.format("FileEntry: %s ex: %5b req: %6d cur: %6d",
+                         getFullName(),
+                         exists(),
+                         getReqSize(),
+                         getCurrentSize());
+
   }
 
   public static void main(String[] args)

@@ -52,6 +52,9 @@ public class Work implements Serializable
   public boolean  journal;
   public boolean  only_eof_writes;
 
+  public boolean nw_monitor_needed;
+  public boolean nw_monitor_now;
+
   public boolean  force_fsd_cleanup = false;
 
   public Debug_cmds rd_start_command;
@@ -238,6 +241,7 @@ public class Work implements Serializable
       /* While we're here, initialize some stuff: */
       sd.format_inserted  = false;
       sd.pure_rand_seq    = false;
+      sd.work_done        = false;
       HashMap slaves_used = new HashMap(32);
 
       for (WG_entry wg : Host.getAllWorkloads())
@@ -462,6 +466,8 @@ public class Work implements Serializable
       }
     }
 
+    for (FsdEntry fsd : FsdEntry.getFsdList())
+      fsd.in_use = false;
 
     /* Go through all anchors: */
     anchors = FileAnchor.getAnchorList();
@@ -482,6 +488,8 @@ public class Work implements Serializable
       {
         FwgEntry fwg = (FwgEntry) rd.fwgs_for_rd.elementAt(j);
         used_anchor_map.put(fwg.anchor, null);
+        fwg.work_done = false;
+        FsdEntry.findFsd(fwg.fsd_name).in_use = true;
 
         if (fwg.anchor == anchor)
           fwgs_for_anchor.add(fwg);
@@ -534,7 +542,7 @@ public class Work implements Serializable
         {
           for (Slave slave : slaves)
           {
-            for (String anchor_name : slave.getNamesUsedList())
+            for (String anchor_name : slave.getAnchorsUsed())
             {
               if (anchor.getAnchorName().equals(anchor_name))
                 slave_to_use = slave;
@@ -544,7 +552,7 @@ public class Work implements Serializable
 
         /* Remember which anchors go to this slave: */
         for (FwgEntry fwg : fwgs_for_anchor)
-          slave_to_use.addName(fwg.anchor.getAnchorName());
+          slave_to_use.addAnchorName(fwg.anchor.getAnchorName());
 
         /* That one gets the new work.                           */
         /* Create a new Work() instance or add them to existing: */

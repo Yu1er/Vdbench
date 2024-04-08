@@ -217,7 +217,7 @@ public class Devxlate
             String token = st.nextToken();
             if (token.startsWith("dev="))
             {
-              int devt  = Integer.parseInt(token.substring(4), 16);
+              int devt  = (int) Long.parseLong(token.substring(4), 16);
               String instance = fstype + (devt & 0x3ffff);
               String out[] = { instance, special, fstype, mount_point};
 

@@ -269,8 +269,8 @@ public class AuxExternal extends AuxReport
         if (stats != null)
         {
           ocmd.addText(String.format("rd    %s",   RD_entry.next_rd.rd_name));
-          ocmd.addText(String.format("iops  %.3f", stats.getTotalRate()));
-          ocmd.addText(String.format("resp  %.3f", stats.getTotalResp()));
+          ocmd.addText(String.format("iops  %.3f", stats.getReqstdRate()));
+          ocmd.addText(String.format("resp  %.3f", stats.getReqstdlResp()));
 
           if (kc != null)
           {

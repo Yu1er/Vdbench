@@ -8,13 +8,11 @@ package Vdb;
  * Author: Henk Vandenbergh.
  */
 
-import java.util.*;
-import java.net.*;
 import java.io.*;
-import Utils.ClassPath;
-import Utils.Format;
-import Utils.NfsV3;
-import Utils.NfsV4;
+import java.net.*;
+import java.util.*;
+
+import Utils.*;
 
 
 /**
@@ -35,6 +33,7 @@ public class Host implements Cloneable, Comparable
 
   public  Mount   host_mount = null;
 
+  public  String       master_ip         = null;
   public  String       host_shell        = "rsh";
   public  String       host_user         = null;
   private int          host_jvms         = 1;
@@ -339,7 +338,7 @@ public class Host implements Cloneable, Comparable
 
 
   /**
-   * Find a certain host name.
+   * Find a certain host label.
    */
   public static Host findHost(String name)
   {
@@ -353,6 +352,18 @@ public class Host implements Cloneable, Comparable
     common.failure("Unable to locate host %s (No wildcards allowed)", name);
 
     return null;
+  }
+
+  public static boolean isHostKnown(String name)
+  {
+    for (int i = 0; i < defined_hosts.size(); i++)
+    {
+      Host host = (Host) defined_hosts.elementAt(i);
+      if (host.host_label.equals(name))
+        return true;
+    }
+
+    return false;
   }
 
 
@@ -704,6 +715,13 @@ public class Host implements Cloneable, Comparable
     ArrayList <WG_entry> list = new ArrayList(64);
     for (Host host : getDefinedHosts())
       list.addAll(host.getWorkloads());
+
+    //for (WG_entry wg : list)
+    //  common.ptod("getAllWorkloads: wd=%s,sd=%s,slave=%s",
+    //  wg.wd_used.wd_name, wg.sd_used.sd_name, wg.getSlave().getLabel());
+
+    WG_entry.sortWorkloads(list, "sd");
+
     return list;
   }
 
@@ -770,22 +788,6 @@ public class Host implements Cloneable, Comparable
     return sd_name_map.size();
   }
 
-  /**
-   * Remove a workload from one of this hosts slaves.
-   * Be careful: we must manipulate the original Vector of workloads from the
-   * slave in order to remove it from that slave. A newly generated Vector would
-   * not remove it from the original.
-   */
-  public int removeWorkload(WG_entry remove)
-  {
-    int removes = 0;
-    for (Slave slave : getSlaves())
-    {
-      removes += slave.removeWorkload(remove);
-    }
-
-    return removes;
-  }
 
 
   /**
@@ -810,6 +812,24 @@ public class Host implements Cloneable, Comparable
     }
 
     return lowest;
+  }
+
+  public Slave getSlaveUsingSd(SD_entry sd)
+  {
+    for (Slave slave : getSlaves())
+    {
+      for (WG_entry wg : slave.getWorkloads())
+      {
+        if (wg.sd_used.sd_name.equals(sd.sd_name))
+        {
+          //common.ptod("getSlaveUsingSd: found sd=%s on slave %s", sd.sd_name, slave.getLabel());
+          return slave;
+        }
+      }
+    }
+
+    //common.ptod("getSlaveUsingSd: did not find sd=%s", sd.sd_name);
+    return null;
   }
 
   /**
@@ -844,11 +864,12 @@ public class Host implements Cloneable, Comparable
     /* Find the slave that uses this SD and has the lowest thread count: */
     for (Slave slave : slaves)
     {
-      for (WG_entry wg : slave.getWorkloads())
+      ArrayList <WG_entry> workloads = slave.getWorkloads();
+      for (WG_entry wg : workloads)
       {
         if (wg.sd_used == sd)
         {
-          if (slave.getWorkloads().size() > 0 &&
+          if (workloads.size() > 0 &&
               slave.threads_given_to_slave < lowest.threads_given_to_slave)
             lowest = slave;
         }
@@ -905,7 +926,7 @@ public class Host implements Cloneable, Comparable
       }
 
       host_totals.list = new ArrayList(host_totals.map.values());
-      ThreadMonitor.reportTotals(host.getLabel(),host_totals );
+      ThreadMonitor.reportTotals(host.getLabel(), host_totals );
 
       full_totals.elapsed     = host_totals.elapsed;
       full_totals.processors += host_totals.processors;
@@ -945,6 +966,44 @@ public class Host implements Cloneable, Comparable
     Host o1 = (Host) this;
     Host o2 = (Host) obj;
     return o1.relative_hostno - o2.relative_hostno;
+  }
+
+
+  /**
+   * Get the curent host name.
+   *
+   * A remote slave needs to open a java socket back to the master.
+   * By default the master passes on its current IP address, but there are
+   * situations where the slave is not allowed to use that IP address.
+   * In that case, either the master's network name or the master's 'different'
+   * IP address is passed in the parameter file.
+   *
+   * If that name equals 'hostname', run the local hostname command to figure
+   * out what the name is.
+   */
+  public void runHostName()
+  {
+    if (master_ip == null)
+      return;
+    if (!master_ip.equals("hostname"))
+      return;
+
+    OS_cmd ocmd = OS_cmd.execute("hostname", false);
+    if (!ocmd.getRC())
+    {
+      ocmd.printStderr();
+      ocmd.printStdout();
+      common.failure("'master=hostname' 'hostname' command failure");
+    }
+
+    if (ocmd.getStdout().length == 0)
+    {
+      ocmd.printStderr();
+      ocmd.printStdout();
+      common.failure("'master=hostname' 'hostname' command failure, no data returned.");
+    }
+
+    master_ip = ocmd.getStdout()[0];
   }
 }
 

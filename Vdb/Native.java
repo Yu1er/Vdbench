@@ -264,7 +264,7 @@ public class Native
       {
         printMemoryUsage();
         common.memory_usage();
-        common.failure("allocbuffer() failed. Asking for %d; already have %d allocated",
+        common.failure("allocbuffer() failed. Asking for %,d; already have %,d allocated",
                        bytes, total_size);
       }
 
@@ -333,36 +333,23 @@ public class Native
 
 
   static native String get_one_set_statistics(int    jni_index,
+                                              int    last_warmup,
                                               long[] read_hist,
                                               long[] write_hist);
 
 
   /**
    * Allocate shared memory.
+   *
+   * This can be called multiple times, though shared memory allocation will not
+   * be done a second time.
+   * It will merely reset the PID for Data Validation, and all the statistics
+   * counters will be reset to zero.
    */
   static native void alloc_jni_shared_memory(long pid);
   static        void allocSharedMemory()
   {
-    /* Process id: (java 1.5+) */
-    String pid = common.getProcessIdString();
-    if (!common.isNumeric(pid))
-      common.failure("Invalid process id: '%s'", pid);
-
-    /* PID is only included when we know that everything will just stay within  */
-    /* the same Vdbench execution, including validate=continue.                 */
-    /* Maybe some day we'll have a list of 'old' pids included, unlikely though */
-    if (Validate.isJournaling() || Validate.isContinueOldMap())
-    {
-      alloc_jni_shared_memory(common.getProcessId());
-    }
-    else
-    {
-      /* Temporarily removed because the journaling flag is not set yet */
-      /* when this is called.                                           */
-      /* Though I COULD store it in the DV header, but not CHECK it?    */
-      /* THAT's what I decided!                                         */
-      alloc_jni_shared_memory(common.getProcessId());
-    }
+    alloc_jni_shared_memory(SlaveJvm.getOwnerId());
   }
 
 

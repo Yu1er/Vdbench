@@ -8,10 +8,14 @@ package Utils;
  * Author: Henk Vandenbergh.
  */
 
+import java.io.*;
+import java.net.URL;
+import java.util.ArrayList;
 import java.util.Vector;
 import java.util.zip.*;
-import java.io.*;
+
 import Utils.Format;
+import Vdb.common;
 
 /**
  * This class reads data lines from an regular or GZIP file.
@@ -200,37 +204,57 @@ public class Fget
    */
   public static Vector read_file_to_vector(String parent, String filename)
   {
-    return read_file(new File(parent, filename));
+    return readTextFile(new File(parent, filename));
   }
   public static Vector read_file_to_vector(String filename)
   {
-    return read_file(new File(filename));
+    return readTextFile(new File(filename));
   }
   public static String[] readFileToArray(String dir, String filename)
   {
-    return readFileToArray(new File(dir, filename));
+    Vector <String> lines = readFile(dir, filename);
+    if (lines == null)
+      return null;
+    return lines.toArray(new String[0]);
   }
   public static String[] readFileToArray(String filename)
   {
-    return readFileToArray(new File(filename));
+    Vector <String> lines = readFile(filename);
+    if (lines == null)
+      return null;
+    return lines.toArray(new String[0]);
   }
-  private static String[] readFileToArray(File fptr)
+  private static String[] obsolete_readFileToArray(File fptr)
   {
-    Vector lines = read_file(fptr);
-    String[] array = new String[lines.size()];
-    for (int i = 0; i < lines.size(); i++)
-      array[i] = (String) lines.elementAt(i);
-
-    return array;
+    Vector <String> lines = readTextFile(fptr);
+    if (lines == null)
+      return null;
+    return lines.toArray(new String[0]);
   }
 
-  private static Vector read_file(File fptr)
+
+  private static Vector <String> readFile(String fname)
+  {
+    if (fname.startsWith("http://"))
+      return readTextUrl(fname);
+    else
+      return readTextFile(new File(fname));
+  }
+  private static Vector <String> readFile(String dir, String fname)
+  {
+    if (dir.startsWith("http://"))
+      return readTextUrl(dir, fname);
+    else
+      return readTextFile(new File(dir, fname));
+  }
+
+  private static Vector <String> readTextFile(File fptr)
   {
     Vector output = new Vector(64,0);
     if (!fptr.exists())
     {
-      common.plog("read_file_to_vector(): file not found: " + fptr.getAbsolutePath());
-      return output;
+      //common.plog("readFile(): file not found: " + fptr.getAbsolutePath());
+      return null;
     }
 
     Fget fg = new Fget(fptr);
@@ -241,11 +265,43 @@ public class Fget
       String line = fg.get();
       if (line == null)
         break;
-      output.addElement(line);
+      output.add(line);
     }
     fg.close();
 
     return output;
+  }
+
+
+  public static Vector <String> readTextUrl(String http, String file)
+  {
+    if (http.endsWith("/"))
+      return readTextUrl(http + file);
+    else
+      return readTextUrl(http + "/" + file);
+  }
+  public static Vector <String> readTextUrl(String http)
+  {
+    //common.ptod("http: " + http);
+    Vector <String> lines = new Vector(64);
+    try
+    {
+      URL            url = new URL(http);
+      BufferedReader in  = new BufferedReader(new InputStreamReader(url.openStream()));
+
+      String inputLine;
+      while ((inputLine = in.readLine()) != null)
+        lines.add(inputLine);
+      in.close();
+    }
+
+    catch (Exception e)
+    {
+      //common.ptod(e);
+      return null;
+    }
+
+    return lines;
   }
 
   public String pct_read()
@@ -338,10 +394,13 @@ public class Fget
   }
 
 
+
+
   public static void main(String[] args)
   {
-    boolean rc = file_exists("/home/hvandenb/vdbench/solaris/config.sh");
-    common.ptod("rc: " + rc);
+    String http = "http://sbm-240a.us.oracle.com/shares/export/spp/87micro10/spp02/nfsv3_sbt-fill/output004/summary.html";
+    String[] lines = readFileToArray(http);
+    common.ptod("lines: " + lines.length);
   }
 
 }

@@ -37,7 +37,7 @@ public class BadSector
   public  static int BAD_COMP     = 0x0020;
   public  static int BAD_DEDUPSET = 0x0040;
   public  static int BAD_ZERO     = 0x0080;
-  public  static int BAD_PID      = 0x0100;
+  public  static int BAD_OWNER    = 0x0100;
 
   public  BadKeyBlock  owning_bkb;
   public  BadDataBlock owning_bdb;
@@ -71,7 +71,7 @@ public class BadSector
   public  boolean bad_comp     = false;
   public  boolean bad_dedupset = false;
   public  boolean bad_zero     = false;
-  public  boolean bad_pid      = false;
+  public  boolean bad_owner      = false;
   public  boolean unique       = false;
   public  boolean duplicate    = false;
 
@@ -172,6 +172,7 @@ public class BadSector
         else
           throw new RuntimeException("reportBadSector(): unexpected file handle return: " + obj);
 
+
         /* Create or reuse a BadDataBlock instance: */
         BadDataBlock bdb = bad_data_map.get(bads.rel_data_lba);
         if (bdb == null)
@@ -199,6 +200,11 @@ public class BadSector
           bads.printOneSector();
           ErrorLog.flush();
         }
+
+
+        /* Everybody stop what you're doing (method will ignore if already done): */
+        if (Validate.getErrorCommand() != null)
+          SlaveJvm.stopWork();
       }
     }
     catch (Exception e)
@@ -263,9 +269,8 @@ public class BadSector
     {
       plog("        Data Validation error for sd=%s,lun=%s ", name_left.trim(), lun);
       plog("        Block lba: 0x%08x; sector lba: 0x%08x; Key block size: %d; " +
-           "relative sector in data block: 0x%02x (%2d); current pid: %d (0x%x)",
-           key_lba, sector_lba, key_blksize, sector,
-           sector, common.getProcessId(), common.getProcessId());
+           "relative sector in data block: 0x%02x (%2d)",
+           key_lba, sector_lba, key_blksize, sector, sector);
     }
 
     if (!owning_bkb.allMatching())
@@ -373,7 +378,17 @@ public class BadSector
     if (bad_comp     ) flags.add("Compression pattern miscompare.");
     if (bad_dedupset ) flags.add("Bad dedup set value.");
     if (bad_zero     ) flags.add("Bad reserved field contents (mbz).");
-    if (bad_pid      ) flags.add("Bad process id.");
+
+    if (bad_owner      )
+    {
+      if (!Dedup.isDedup() || unique)
+        flags.add(String.format("Bad owner id. Expecting 0x%04x (%d) but found 0x%04x",
+                                SlaveJvm.getOwnerId(), SlaveJvm.getOwnerId(), getOwnerId()));
+      else
+        flags.add(String.format("Bad owner id. Expecting 0x%04x (%d) but found 0x%04x",
+                                SlaveJvm.getOwnerId(), SlaveJvm.getOwnerId(), getDupOwnerId()));
+    }
+
     if (unique       ) flags.add("This is a unique (dedup) block.");
     if (duplicate    ) flags.add("This is a duplicate (dedup) block.");
 
@@ -390,7 +405,7 @@ public class BadSector
     bad_comp     = ((error_flag & BAD_COMP     ) != 0);
     bad_dedupset = ((error_flag & BAD_DEDUPSET ) != 0);
     bad_zero     = ((error_flag & BAD_ZERO     ) != 0);
-    bad_pid      = ((error_flag & BAD_PID     ) != 0);
+    bad_owner    = ((error_flag & BAD_OWNER    ) != 0);
 
     /* Key miscompare ALWAYS implies data miscompare, so 'bad_data' is irrelevant: */
     if (bad_key)
@@ -516,7 +531,7 @@ public class BadSector
            ((error_flag & BAD_DEDUPSET) != 0) ? "*" : " ",
            (int) (dedup_set >> 32),
            (int) dedup_set,
-           expected_pattern[2],
+           SlaveJvm.getOwnerId(),
            expected_pattern[3],
            sector_array[0],
            sector_array[1],
@@ -675,6 +690,14 @@ public class BadSector
       return null;
   }
 
+  public int getOwnerId()
+  {
+    return sector_array[7];
+  }
+  public int getDupOwnerId()
+  {
+    return sector_array[2];
+  }
   public int getKey()
   {
     return sector_array[4] >>> 24;

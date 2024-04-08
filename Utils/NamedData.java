@@ -1,12 +1,12 @@
 package Utils;
-    
-/*  
- * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved. 
- */ 
-    
-/*  
- * Author: Henk Vandenbergh. 
- */ 
+
+/*
+ * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.
+ */
+
+/*
+ * Author: Henk Vandenbergh.
+ */
 
 import java.util.*;
 
@@ -16,8 +16,8 @@ import java.util.*;
  */
 public class NamedData  implements java.io.Serializable
 {
-  private final static String c = 
-  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved."; 
+  private final static String c =
+  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.";
 
   private LookupAnchor instance_anchor = null;
   private long   last_ts  = 0;   /* in Microseconds */
@@ -34,6 +34,10 @@ public class NamedData  implements java.io.Serializable
   private static String current_new_label = null;
 
 
+  public NamedData()
+  {
+  }
+
   public NamedData(LookupAnchor anchor)
   {
     instance_anchor = anchor;
@@ -44,6 +48,28 @@ public class NamedData  implements java.io.Serializable
   public synchronized static NamedData newInstance(String iname)
   {
     String name = iname;
+
+
+    /* A NamedData class may be a direct instantiation for ImportNamedData(): */
+    if (iname.startsWith("Utils.NamedData"))
+    {
+      /* Did we see this class before? if not, create it: */
+      LookupAnchor anchor = LookupAnchor.findAnchor(iname);
+      if (anchor == null)
+      {
+        anchor = new LookupAnchor(iname);
+
+        /* If we have any overrides, use them now: */
+        // This caused me to lose arc.size.component 'value' data. Still don't understand.
+        // This was ONLY added anyway to then find out that we had a stale arc.size PDIT pickup
+        //NamedOverride.override(anchor, anchor.getSubtype());
+      }
+
+      NamedData nd = new NamedData(anchor);
+      return nd;
+    }
+
+
 
     //common.ptod("newInstance: " + name);
     if (iname.indexOf("/") != -1)

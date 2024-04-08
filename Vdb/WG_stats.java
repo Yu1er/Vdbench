@@ -8,6 +8,7 @@ package Vdb;
  * Author: Henk Vandenbergh.
  */
 
+import java.util.Date;
 import java.util.Vector;
 
 public class WG_stats
@@ -19,16 +20,13 @@ public class WG_stats
 
   private static Histogram static_read_hist  = new Histogram("default");
   private static Histogram static_write_hist = new Histogram("default");
-  private static Histogram static_total_hist = new Histogram("default");
 
   /**
    * Get JNI statistics for each workload.
    * Delta statistics will be stored in wg.jni_index_list
    */
-  public static void get_jni_statistics(boolean workload_done)
+  public static void get_jni_statistics(boolean workload_done, boolean last_warmup)
   {
-
-    long tod = Native.get_simple_tod();
     SdStats  sd_stats = new SdStats();
 
     long[] read_hist  = static_read_hist.getJniBucketArray();
@@ -45,13 +43,13 @@ public class WG_stats
         JniIndex jni  = wg.jni_index_list.get(s);
 
         String line = Native.get_one_set_statistics(jni.jni_index,
+                                                    (last_warmup) ? 1 : 0,
                                                     read_hist,
                                                     write_hist);
 
         /* In 503 I opted to have statistics passed in ascii. It's much easier */
         /* and since it is done at worst once a second the overhead is little: */
         String[] split = line.trim().split(" +");
-        sd_stats.last_ts     = tod;
         sd_stats.reads       = Long.parseLong(split[ 1  ]);
         sd_stats.r_resptime  = Long.parseLong(split[ 3  ]);
         sd_stats.r_resptime2 = Long.parseLong(split[ 5  ]);

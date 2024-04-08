@@ -1,12 +1,12 @@
 package Vdb;
-    
-/*  
- * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved. 
- */ 
-    
-/*  
- * Author: Henk Vandenbergh. 
- */ 
+
+/*
+ * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.
+ */
+
+/*
+ * Author: Henk Vandenbergh.
+ */
 
 import java.io.*;
 import java.lang.String;
@@ -17,8 +17,8 @@ import java.util.StringTokenizer;
  */
 class Var_parms
 {
-  private final static String c = 
-  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved."; 
+  private final static String c =
+  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.";
 
   static final int    VAR_DASH_N   =  -101;
   static final String VAR_DASH_A   = "-101a";
@@ -103,7 +103,7 @@ class Var_parms
     String lastflag = "";
 
     /* Allocate enough to handle this all: */
-    String news[] = new String[1024];
+    String news[] = new String[16384];
     String olds[] = input.alphas;
     int    newix = 0;
 

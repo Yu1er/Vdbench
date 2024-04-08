@@ -113,7 +113,22 @@ public class ownmath
     if (((double)n*(double)(sumsqr)) < ((double)(sum)*(double)(sum)))
       return 0.0;
 
-    return Math.sqrt((((double)n*(double)(sumsqr))-((double)(sum)*(double)(sum)))/((double)n*((double)n-1.0)));
+    double res = Math.sqrt((((double)n*(double)(sumsqr))-((double)(sum)*(double)(sum)))/((double)n*((double)n-1.0)));
+    //common.ptod("stddev: " + res + " " + n + " " + sumsqr + " " + sum);
+    return res;
+  }
+
+  public static double stddev(int n, double sumsqr, double sum)
+  {
+    if (n <= 1)
+      return 0.0;
+
+    if (((double)n*(double)(sumsqr)) < ((double)(sum)*(double)(sum)))
+      return 0.0;
+
+    double res = Math.sqrt((((double)n*(double)(sumsqr))-((double)(sum)*(double)(sum)))/((double)n*((double)n-1.0)));
+    //common.ptod("stddev: %f %d %f %f", res, n, sumsqr, sum);
+    return res;
   }
 
 
@@ -168,7 +183,7 @@ public class ownmath
     //    return Math.abs((middle + gaussian)) % max_value;
   }
 
-  public static void main(String[] args)
+  public static void main2(String[] args)
   {
     int    file_count     = Integer.parseInt(args[0]);
     long   loops          = Integer.parseInt(args[1]) * 1000000l;
@@ -261,5 +276,52 @@ public class ownmath
     }
 
   }
+
+
+  public static void main(String[] args)
+  {
+    //double n1 = 9693;
+    //double n2 = 9649;
+    //double n3 = 9656;
+    //double n4 = 9666;
+
+    double n1 = 9693.273;
+    double n2 = 9648.697;
+    double n3 = 9655.663;
+    double n4 = 9666.273;
+
+    double sum = n1 + n2 + n3 + n4;
+    double square = (n1*n1) + (n2*n2) + (n3*n3) + (n4*n4);
+
+    double std = stddev(4, square, sum);
+    common.ptod("std1: %.4f", std);
+    common.ptod("square:  " + square);
+    common.ptod("sum:     " + sum);
+
+    common.ptod("rel: %f", std / (sum / 4) );
+
+
+
+    std = stddev(4, 373727342.,  38664.);
+    common.ptod("std2: %.4f", std);
+
+    std = stddev(4, 373725568.,  38663.);
+    common.ptod("std3: %.4f", std);
+
+  }
 }
 
+
+
+//    double n1 = 1000;
+//    double n2 = 1050;
+//    double n3 = 1050;
+//    double n4 = 1025;
+//
+//    double sum = n1 + n2 + n3 + n4;
+//    double square = (n1*n1) + (n2*n2) + (n3*n3) + (n4*n4);
+//
+//    double std = stddev(4, (long) square, (long) sum);
+//    common.ptod("std: %.4f", std);
+//
+//    common.ptod("rel: " + std / (sum / 4) / 100);

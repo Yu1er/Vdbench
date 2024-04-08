@@ -127,29 +127,19 @@ class SlaveStarter extends ThreadControl
       /* Add the name/ip address of the master: */
       ocmd.addText("-m");
       if (host.getLabel().equals("localhost"))
-      {
-        String ip = "localhost";
+        ocmd.addText("localhost");
 
-        if (Fget.file_exists("override_ip.txt"))
-        {
-          ip = Fget.readFileToArray("override_ip.txt")[0];
-          common.ptod("Using file 'override_ip.txt': " + ip);
-        }
-        ocmd.addText(ip);
-      }
       else
       {
-        String ip = common.getCurrentIP();
-        if (ip.equals("127.0.0.1"))
+        String master_ip = common.getCurrentIP();
+        if (master_ip.equals("127.0.0.1"))
           common.failure("Current system IP address is '%s'. "+
-                         "Invalid network definition for multi-host processing.", ip);
-        if (Fget.file_exists("override_ip.txt"))
-        {
-          ip = Fget.readFileToArray("override_ip.txt")[0];
-          common.ptod("Using file 'override_ip.txt': " + ip);
-        }
+                         "Invalid network definition for multi-host processing.", master_ip);
 
-        ocmd.addText(ip);
+        if (host.master_ip != null)
+          master_ip = host.master_ip;
+
+        ocmd.addText(master_ip);
       }
 
       /* Add the name of this slave to serve socket recognition: */
@@ -233,7 +223,7 @@ class SlaveStarter extends ThreadControl
 
       /* We've got a problem here: any command sent to this socket will be */
       /* blindly executed. Need to remove the './vdbench SlaveJVM' piece.  */
-      /* RSH at the other side will add it again.                          */
+      /* RSH at the other side will add it again. Done in 50407!           */
       String cmd = ocmd.getCmd().substring(ocmd.getCmd().indexOf("SlaveJvm") + 8);
       Rsh.issueCommand(slave, cmd);
     }

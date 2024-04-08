@@ -8,8 +8,10 @@ package Vdb;
  * Author: Henk Vandenbergh.
  */
 
-import java.util.Vector;
 import java.io.*;
+import java.util.Arrays;
+import java.util.Vector;
+
 import Utils.*;
 
 /**
@@ -198,6 +200,9 @@ public class NfsStats
   {
     String[] labels = nameddata.getFieldTitles();
 
+    // No sort unless we change .getRate(i) call below!
+    //Arrays.sort(labels);
+
     /* Create total: */
     double total_rate = 0;
     for (int i = 0; i < labels.length; i++)
@@ -213,14 +218,14 @@ public class NfsStats
     {
       double rate = nameddata.getRate(i);
 
-      /* Including %% gets confusing since they have NOT relation to Operation count, */
+      /* Including %% gets confusing since they have NO relation to Operation count, */
       /* but it is still useful. */
       if (rate > 0)
-        report.println("%s %-12s %5.0f %5.2f%%", common.tod(), labels[i], rate,
+        report.println("%s %-12s %,8.0f %5.2f%%", common.tod(), labels[i], rate,
                        rate * 100. / total_rate);
     }
 
-
+    report.println("%s %-12s %,8.0f", common.tod(), "Total", total_rate);
   }
 
 

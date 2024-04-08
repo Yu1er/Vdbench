@@ -76,8 +76,6 @@ public class CollectSlaveStats extends Thread
   public long   start_reporting         = 0;
   public long   end_reporting           = 0;
 
-  //private static Fput report_report = null;
-
 
   /**
    * Async thread instance.
@@ -111,6 +109,7 @@ public class CollectSlaveStats extends Thread
 
   public void requestStatistics(boolean last_call)
   {
+    boolean last_warmup = (requested_interval == Reporter.getWarmupIntervals());
 
     /* At the start of a new run, clear all ReportData statistics: */
     if (requested_interval == 1)
@@ -158,12 +157,16 @@ public class CollectSlaveStats extends Thread
       if (slave.getCurrentWork() == null)
         continue;
 
-      /* Make seq# negative to identify 'last call': */
+      /* Data passed on to slave:         */
+      /* long[0]: request_sequence_number */
+      /* long[1]: last_interval           */
+      /* long[2]: last_warmup             */
+      long[] info = new long[3];
+      info[0] = request_sequence_number;
+      info[1] = (last_interval) ? 1 : 0;
+      info[2] = (last_warmup)   ? 1 : 0;
       SocketMessage sm = new SocketMessage(SocketMessage.REQUEST_SLAVE_STATISTICS);
-      if (last_interval)
-        sm.setInfo(request_sequence_number * -1);
-      else
-        sm.setInfo(request_sequence_number);
+      sm.setData(info);
       slave.getSocket().putMessage(sm);
     }
 
@@ -185,13 +188,10 @@ public class CollectSlaveStats extends Thread
   /**
    * Send statistics to the master.
    */
-  public static SlaveStats getStatsForMaster(long stat_number)
+  public static SlaveStats getStatsForMaster(long    stat_number,
+                                             boolean last_interval,
+                                             boolean last_warmup)
   {
-    /* A negatuve statistics sequence number identifies 'last call': */
-    boolean last_interval = (stat_number < 0);
-    stat_number = Math.abs(stat_number);
-
-
     SlaveStats sts = new SlaveStats(stat_number);
 
     /* CPU and Kstat data if needed: */
@@ -209,13 +209,19 @@ public class CollectSlaveStats extends Thread
         NfsStats.getAllNfsDeltasFromKstat();
         sts.setNfsData(NfsStats.getNfs3(), NfsStats.getNfs4());
       }
+
+      if (common.onSolaris() && SlaveWorker.work.nw_monitor_now)
+      {
+        NwStats.loadStatistics();
+        sts.nw_stats= NwStats.getData();
+      }
     }
 
     if (SlaveWorker.work.wgs_for_slave != null)
-      getSdStatistics(sts, last_interval);
+      getSdStatistics(sts, last_interval, last_warmup);
 
     else
-      getFileSystemStatistics(sts, last_interval);
+      getFileSystemStatistics(sts, last_interval, last_warmup);
 
     return sts;
   }
@@ -225,10 +231,12 @@ public class CollectSlaveStats extends Thread
    * 'Regular' statistics: statistics related to the original non-file
    *  system version of vdbench.
    */
-  private static void getSdStatistics(SlaveStats sts, boolean last_interval)
+  private static void getSdStatistics(SlaveStats sts,
+                                      boolean    last_interval,
+                                      boolean    last_warmup)
   {
     /* Get the raw statistics (it's stored in WG_entry): */
-    WG_stats.get_jni_statistics(last_interval);
+    WG_stats.get_jni_statistics(last_interval, last_warmup);
 
     /* Pick up all SdStats data from the WG_entry instances: */
     ArrayList <SdStats> sd_stats = new ArrayList(64);
@@ -239,6 +247,7 @@ public class CollectSlaveStats extends Thread
       for (int s = 0; s < wg.jni_index_list.size(); s++)
       {
         JniIndex jni  = wg.jni_index_list.get(s);
+        jni.dlt_stats.work_done = wg.seq_eof;
         sd_stats.add(jni.dlt_stats);
         jni.dlt_stats.sd_name = jni.sd_name;
         jni.dlt_stats.wd_name = jni.wd_name;
@@ -255,48 +264,57 @@ public class CollectSlaveStats extends Thread
    * Deliver file system statistics. Gather stats from all threads,
    * accumulate them, and return.
    */
-  private static void getFileSystemStatistics(SlaveStats sts, boolean last_interval)
+  private static long last_permit_tod = 0;
+  private static void getFileSystemStatistics(SlaveStats sts,
+                                              boolean    last_interval,
+                                              boolean    last_warmup)
   {
-    FwdStats total_stats = new FwdStats();
-    FwdStats delta_fwd   = new FwdStats();
-    HashMap fsd_map      = new HashMap(32);
-    HashMap fwg_map      = new HashMap(32);
+    FwdStats total_stats               = new FwdStats();
+    FwdStats delta_fwd                 = new FwdStats();
+    HashMap  fsd_map                   = new HashMap(32);
+    HashMap <String, FwdStats> fwg_map = new HashMap(32);
+    long total_permit = 0;
+    long total_time   = 0;
 
     Vector threads = FwgRun.getThreads();
     for (int i = 0; i < threads.size(); i++)
     {
       FwgThread thread = (FwgThread) threads.elementAt(i);
 
+      long this_interval = thread.permit_time - thread.permit_last;
+      total_permit      += this_interval;
+      thread.permit_last = thread.permit_time;
+
       /* Accumulate slave totals: */
       delta_fwd.delta(thread.per_thread_stats, thread.old_stats);
       total_stats.accum(delta_fwd, false);
+      total_stats.permit_time += this_interval;
+      total_stats.permit_count++;
 
       /* Count each fsd and fwd: */
       FwdStats fsd_stat = (FwdStats) fsd_map.get(thread.fwg.fsd_name);
       if (fsd_stat == null)
         fsd_map.put(thread.fwg.fsd_name, fsd_stat = new FwdStats());
       fsd_stat.accum(delta_fwd, false);
+      fsd_stat.work_done = thread.fwg.work_done;
+      fsd_stat.permit_time += this_interval;
+      fsd_stat.permit_count++;
 
       FwdStats fwg_stat = (FwdStats) fwg_map.get(thread.fwg.getName());
       if (fwg_stat == null)
         fwg_map.put(thread.fwg.getName(), fwg_stat = new FwdStats());
       fwg_stat.accum(delta_fwd, false);
-
+      fwg_stat.permit_time += this_interval;
+      fwg_stat.permit_count++;
 
       /* Prepare for future delta: */
       thread.old_stats.copyStats(thread.per_thread_stats);
     }
 
 
-    // This is not complete. If we do this below we report ONLY the
-    // last interval, not all intervals
-
-    /* We only want to send over the histogram data at the end: */
-    //if (!last_interval)
-    //  total_stats.clearHistogram();
-
-
     /* Send to master: */
+    sts.permit_time    = total_permit;
+    sts.permit_threads = threads.size();
     sts.setSlaveIntervalStats(total_stats, fsd_map, fwg_map);
   }
 
@@ -369,19 +387,25 @@ public class CollectSlaveStats extends Thread
   }
 
 
-  private void addAllSlaves(Slave slave, SlaveStats sts)
+  private void addDataToSlave(Slave slave, SlaveStats sts)
   {
-
     /* SD statistics: */
     if (Vdbmain.isWdWorkload())
     {
-      storeSdStats(slave, sts);
+      storeSlaveSdStats(slave, sts);
       slave.accumMonData(sts.tmonitor_deltas);
     }
 
     /* or FSD statistics: */
     else
     {
+      /* Before we start, copy Network statistics if needed: */
+      if (RD_entry.next_rd.getOrPutUsed())
+      {
+        sts.getSlaveIntervalStats().r_bytes = NwStats.getInbytes(sts.nw_stats);
+        sts.getSlaveIntervalStats().w_bytes = NwStats.getOtbytes(sts.nw_stats);
+      }
+
       Blocked.accumCounters(sts.getBlockCounters());
 
       /* Add slave totals for this interval: */
@@ -399,8 +423,8 @@ public class CollectSlaveStats extends Thread
         rs.accumIntervalFwdStats(sts.getSlaveIntervalStats());
 
         /* Add FSD and FWD specific statistics to run totals: */
-        ReportData.accumMappedIntervalStats(slave, sts.getFsdMap());
-        ReportData.accumMappedIntervalStats(slave, sts.getFwdMap());
+        ReportData.accumMappedFsdStats(slave, sts.getFsdMap());
+        ReportData.accumMappedFwdStats(sts.getFwdMap());
       }
     }
 
@@ -414,8 +438,10 @@ public class CollectSlaveStats extends Thread
 
     /* Pick up Kstat data if there is some available: */
     InfoFromHost info = slave.getHost().getHostInfo();
-    if (!info.anyKstatErrors() && info != null && info.isSolaris() && sts.getKstatData() != null)
-    //if (info != null && info.isSolaris() && sts.getKstatData() != null)
+    if (!info.anyKstatErrors() &&
+        info != null &&
+        info.isSolaris() &&
+        sts.getKstatData() != null)
     {
       if (sts.getKstatData().size() != info.getInstancePointers().size())
         common.failure("receiveStats() host: " + slave.getHost().getLabel() +
@@ -434,7 +460,7 @@ public class CollectSlaveStats extends Thread
    *
    * This is run asynchronous.
    */
-  private void doDetailedReporting(boolean catching_up)
+  private boolean doDetailedReporting(boolean catching_up)
   {
     SimpleDateFormat df = new SimpleDateFormat( "HH:mm:ss.SSS" );
 
@@ -445,6 +471,7 @@ public class CollectSlaveStats extends Thread
       if (!catching_up)
         Report.reportWdInterval();
 
+      /* Only when warmup is done will we add the numbers to the run totals: */
       if (Reporter.isWarmupDone())
       {
         ReportData.addSdIntervalToTotals();
@@ -463,6 +490,7 @@ public class CollectSlaveStats extends Thread
       if (!catching_up)
         FwdReport.reportFwdInterval();
 
+      /* Only when warmup is done will we add the numbers to the run totals: */
       if (Reporter.isWarmupDone())
       {
         ReportData.addFwdIntervalToTotals();
@@ -502,8 +530,12 @@ public class CollectSlaveStats extends Thread
                   (start_reporting - expected_interval_end) / 1000.,
                   (end_reporting   - expected_interval_end) / 1000.,
                   (end_reporting   - start_reporting)       / 1000.);
+
+      /* Tell caller to not check for timeouts: */
+      return false;
     }
 
+    return true;
   }
 
 
@@ -537,7 +569,7 @@ public class CollectSlaveStats extends Thread
     if (rd.max_data != Double.MAX_VALUE && total_bytes > limit_t)
     {
       common.pboth("Reached maxdata=%s. rd=%s shutting down after next interval. ",
-                   FileAnchor.whatSize(limit_t), rd.rd_name);
+                   FileAnchor.whatSize(total_bytes), rd.rd_name);
       Vdbmain.setWorkloadDone(true);
     }
 
@@ -567,7 +599,7 @@ public class CollectSlaveStats extends Thread
         if (sd.isActive())
           limit += sd.end_lba;
       }
-      limit *= max;
+      limit = limit * max / 100;
     }
     return limit;
   }
@@ -644,9 +676,9 @@ public class CollectSlaveStats extends Thread
 
 
   /**
-   * Store Vdbench statistics.
+   * Store Vdbench statistics for a slave.
    */
-  private void storeSdStats(Slave slave, SlaveStats ss)
+  private void storeSlaveSdStats(Slave slave, SlaveStats ss)
   {
     /* Statistics arrive here as an array for each slave with statistics  */
     /* collected per WG_entry. Since there can be multiple WG_entry's     */
@@ -675,6 +707,8 @@ public class CollectSlaveStats extends Thread
       {
         if (sd_stats[j].sd_name.equals(sds[i]))
         {
+          if (sd_stats[j].work_done)
+            SD_entry.findSD(sds[i]).work_done = true;
           new_stats[i].stats_accum(sd_stats[j], false);
           new_stats[i].elapsed = interval_duration * 1000000;
         }
@@ -693,8 +727,11 @@ public class CollectSlaveStats extends Thread
       /* Add slave totals for this interval: */
       Report.getSummaryReport().getData().accumIntervalSdStats(stats);
       Report.getReport(slave).getData().accumIntervalSdStats(stats);
-      if (Report.slave_detail)
-        slave.getReport(stats.sd_name).getData().accumIntervalSdStats(stats);
+
+      /* Here we add SD statistics for a Slave, and this may be the point    */
+      /* where we can ask "how long ago is it that slave X did work for sdY? */
+      slave.getReport(stats.sd_name).getData().accumIntervalSdStats(stats);
+
       if (Report.host_detail)
         slave.getHost().getReport(stats.sd_name).getData().accumIntervalSdStats(stats);
 
@@ -725,7 +762,7 @@ public class CollectSlaveStats extends Thread
       synchronized (wd)
       {
         /* This is used for WD reports: */
-        if (Vdbmain.wd_list.size() > 1)
+        if (Vdbmain.wd_list.size() > 1 && wd.wd_is_used)
           Report.getReport(wdname).getData().accumIntervalSdStats(sd_stats[i]);
 
         /* Count total i/o for each WD (used for setting curve skew): */
@@ -835,7 +872,7 @@ public class CollectSlaveStats extends Thread
           for (int i = 0; i < css.data_from_slaves.length; i++)
           {
             SlaveStats sts = css.data_from_slaves[i];
-            css.addAllSlaves(sts.owning_slave, sts);
+            css.addDataToSlave(sts.owning_slave, sts);
           }
 
           /* Some intervals may not be behind but we'll skip ALL anyway: */
@@ -849,15 +886,40 @@ public class CollectSlaveStats extends Thread
           }
 
           /* Now do all the hard work: */
-          css.doDetailedReporting(catching_up);
+          boolean check_timeouts =css.doDetailedReporting(catching_up);
           reporting_queue.remove(css);
+
+          //common.ptod("css: %3d %b", css.requested_interval, (css.requested_interval >= Reporter.getWarmupIntervals()) );
+
+          /* Timeouts are ignored during warmup and during reporting catchups:      */
+          /* Why is that?                                                           */
+          /* warmup of course is clear, that's what warmup is for.                  */
+          /* Outside of warmup though we have a problem when reporting gets behind. */
+          /* It then can happen that we get performance data for an interval that   */
+          /* is much shorter than expected, with the result that the chance that    */
+          /* a low-use SD shows zero iops is theoretically too high, causing        */
+          /* Vdbench to think that this SD is idle.                                 */
+
+          /* But what about 'very low iorate' runs, e.g. iorate=10 with 100 SDs?    */
+          /* I am starting to think that reporting idle SDs when timeout is not     */
+          /* really active may be opening a can of worms                            */
+
+          if (Reporter.isWarmupDone() && check_timeouts)
+            Timeout.lookForTimeouts();
+
+          /* For reporting purposes warmup is not done until all statistics */
+          /* for the warmup period have been reported:                      */
+          if (css.requested_interval >= Reporter.getWarmupIntervals() &&
+              !Reporter.isWarmupDone())
+          {
+            Reporter.setWarmupDone(css.requested_interval);
+          }
 
 
           /* If we did the last interval, wake up the code so that it */
           /* can finish up this run and start the next one:                 */
           if (css.last_interval)
           {
-            //Reporter.reportEndOfRun();
             css.wait_for_last.release();
 
             /* Since the first run, if needed, is always the Journal recovery run */
@@ -867,6 +929,7 @@ public class CollectSlaveStats extends Thread
               sd.journal_recovery_complete = true;
             break;
           }
+
         }
 
         /* Nothing queued, so if the Reporter is done, so are we. */

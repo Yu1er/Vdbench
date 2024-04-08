@@ -51,9 +51,7 @@ class Directory implements Serializable, Comparable
   private static Vector <Directory> temp_dir_list  = null;
 
   private static boolean debug  = common.get_debug(common.DIRECTORY_SET_BUSY);
-  private static boolean debugc = common.get_debug(common.DIRECTORY_CREATED);
 
-  public String debugging = null;
 
   public Directory()
   {
@@ -280,6 +278,8 @@ class Directory implements Serializable, Comparable
    * of directory names in memory.
    * However, because of debugging statements everywhere this method is called
    * so often that it may impact cpu overhead.
+   *
+   * This below determined to be incorrect. 04/26/2017
    * I therefore decided to store the directory name anyway.
    * Remember, it is the directory name. I am still not storing the file name
    * which could cost us much more for instance if we have lots of files in the
@@ -330,8 +330,7 @@ class Directory implements Serializable, Comparable
 
   public String getDirName()
   {
-    String name = String.format("vdb.%d_%d.dir", depth, width+1);
-
+    String name = String.format(getAnchor().dir_mask, depth, width+1);
     return name;
   }
 
@@ -414,7 +413,7 @@ class Directory implements Serializable, Comparable
         }
       }
 
-      common.ptod("dir.dir_exists:   " + dir_exists);
+      common.ptod("dir_exists:       " + dir_exists);
       common.ptod("dir_ptr.exists(): " + dir_ptr.exists());
       common.ptod("file.exists():    " + new File(getFullName()).exists());
       Blocked.printCountersToLog();
@@ -440,12 +439,20 @@ class Directory implements Serializable, Comparable
       common.failure("Deleting directory that does not exist");
 
     if (files_in_dir != 0)
+    {
+      common.ptod("dir.exists:       " + dir_exists);
+      common.ptod("dir.full:         " + getFullName());
+      common.ptod("dir_ptr.exists(): " + getDirPtr().exists());
+      common.ptod("file.exists():    " + new File(getFullName()).exists());
+      common.ptod("anyExistingChildren: " + anyExistingChildren());
       common.failure("Deleting directory that is not empty");
+    }
 
     long start = Native.get_simple_tod();
     if (!getDirPtr().delete())
     {
       common.ptod("dir.exists:       " + dir_exists);
+      common.ptod("dir.full:         " + getFullName());
       common.ptod("dir_ptr.exists(): " + getDirPtr().exists());
       common.ptod("file.exists():    " + new File(getFullName()).exists());
       common.ptod("anyExistingChildren: " + anyExistingChildren());

@@ -85,6 +85,7 @@ public class ErrorLog
    */
   public static void ptod(String format, Object ... args)
   {
+    /* if on slave: */
     if (pw == null)
     {
       /* If there are no arguments that don't use String.format(), */
@@ -97,10 +98,12 @@ public class ErrorLog
       SlaveJvm.sendMessageToMaster(SocketMessage.ERROR_MESSAGE, txt);
       common.ptod(txt);
     }
+
+    /* If on master: */
     else
     {
       /* If there are no arguments that don't use String.format(), */
-      /* Because there could be REAL non-mask % sings there: */
+      /* Because there could be REAL non-mask % signs there: */
       String txt;
       if (args.length == 0)
         txt = common.tod() + " " + format;
@@ -108,16 +111,9 @@ public class ErrorLog
         txt = common.tod() + " " + String.format(format, args);
       pw.println(txt);
       common.stdout.println(txt);
-    }
-  }
-  public static void ptodVector(Vector <String> messages)
-  {
-    for (String msg : messages)
-    {
-      if (pw == null)
-        SlaveJvm.sendMessageToMaster(SocketMessage.ERROR_MESSAGE, msg);
-      else
-        pw.println(msg);
+
+      /* Some users expect on seeing these errors on logfile: */
+      common.plog(txt);
     }
   }
 
@@ -162,10 +158,10 @@ public class ErrorLog
     {
       if (messages.size() > 0)
       {
-        ptodVector(messages);
+        SlaveJvm.sendMessageToMaster(SocketMessage.ERROR_MESSAGE, messages);
         common.ptod(messages);
+        messages.clear();
       }
-      messages.clear();
     }
   }
   public static int size()
@@ -176,20 +172,35 @@ public class ErrorLog
 
   /**
    * Count i/o or DV errors.
+   *
+   * Normally count of one, but a value larger than one equals the amount of
+   * seconds LATE during shutdown.
    */
-  public static void countErrorsOnSlave(String lun, long lba, int xfersize)
+  public static void countErrorsOnSlave(Integer count)
   {
-    if (Validate.getErrorCommand() == null)
-    {
-      SlaveJvm.sendMessageToMaster(SocketMessage.COUNT_ERRORS);
-      return;
-    }
-
-    startErrorCommand(lun, lba, xfersize);
+    SlaveJvm.sendMessageToMaster(SocketMessage.COUNT_ERRORS, count);
   }
 
-  public static void countErrorsOnMaster()
+
+  /**
+   * A message arrived from a slave: the master counts until 'data_errors='
+   *
+   * If 'count' however is greater than '1' it equals the amount of seconds
+   * timeout value during slave shutdown.
+   */
+  public static void countErrorsOnMaster(String slave_label, Integer count)
   {
+    /* A value greater than ONE indicates that the slave could not terminate */
+    /* within it's normal timeout value:                                     */
+    if (count > 1)
+    {
+      Timeout.callScriptForShutdown();
+      Report.flushAllReports();
+      common.failure("Shutdown of slave=%s took more than %d seconds. Run aborted.",
+                     slave_label, count);
+    }
+
+
     /* Terminate upon request: */
     tod_last_dv_error = System.currentTimeMillis();
 
@@ -210,8 +221,8 @@ public class ErrorLog
         //common.sleep_some(500);
         // journal check removed, Binia, 05/23/16
         //if (!Validate.isJournalRecoveryActive())
-          common.failure("'data_errors=%d' requested. Abort rd=%s after last error.",
-                         Validate.getMaxErrorCount(), RD_entry.next_rd.rd_name);
+        common.failure("'data_errors=%d' requested. Abort rd=%s after last error.",
+                       Validate.getMaxErrorCount(), RD_entry.next_rd.rd_name);
       }
     }
   }
@@ -227,34 +238,53 @@ public class ErrorLog
 
 
   /**
-   * Start the optional data_errors="xyz $output $lun $lba $size" command.
+   * Start the optional data_errors="xyz $output $lun $lba $xfersize $sector"
+   * command.
+   *
+   * Note: data_errors="xxx output=$output" will fail because of 'Unknown
+   * variable substitution request in parameter file'.
+   * Just do it a different way and we can keep the variable check in tact!
    */
-  private static synchronized void startErrorCommand(String lun, long lba, int xfersize)
+  private static volatile int    call_count = 0;
+  private static          OS_cmd ocmd       = new OS_cmd();
+  public static synchronized void runErrorCommand(String lun,
+                                                  long   lba,
+                                                  long   sector,
+                                                  long   xfersize,
+                                                  String error_code)
   {
-    String cmd = Validate.getErrorCommand();
-    if (cmd.startsWith("stop"))
-      common.failure("'data_error=stop' requested. Abort after first error");
+    /* Run this only ONCE: */
+    synchronized (ocmd)
+    {
+      if (call_count++ > 0)
+        return;
 
-    /* Start error script, substituting a few fields: */
-    cmd = common.replace(cmd, "$output", Validate.getOutput());
-    cmd = common.replace(cmd, "$lun",    lun);
-    cmd = common.replace(cmd, "$lba",    "" + lba);
-    cmd = common.replace(cmd, "$size",   "" + xfersize);
-    OS_cmd ocmd = new OS_cmd();
-    ocmd.addText(cmd);
-    ocmd.execute();
+      String cmd = Validate.getErrorCommand();
+      if (cmd.startsWith("stop"))
+        common.failure("'data_error=stop' requested. Abort after first error");
 
-    String[] stdout = ocmd.getStdout();
-    String[] stderr = ocmd.getStderr();
-    for (int i = 0; i < stdout.length; i++)
-      common.ptod("stdout: " + stdout[i]);
-    for (int i = 0; i < stderr.length; i++)
-      common.ptod("stderr: " + stderr[i]);
+      /* Start error script, substituting a few fields: */
+      cmd = common.replace(cmd, "$output", Validate.getOutput());
+      cmd = common.replace(cmd, "$lun",    lun);
+      cmd = common.replace(cmd, "$lba",    "" + lba);
+      cmd = common.replace(cmd, "$size",   "" + xfersize);
+      cmd = common.replace(cmd, "$sector", "" + sector);
+      cmd = common.replace(cmd, "$error",  "" + error_code);
+      ocmd.addText(cmd);
+      ocmd.execute();
 
-    /* Give master a little time to receive the message before we abort: */
-    common.sleep_some(1000);
+      String[] stdout = ocmd.getStdout();
+      String[] stderr = ocmd.getStderr();
+      for (int i = 0; i < stdout.length; i++)
+        common.ptod("stdout: " + stdout[i]);
+      for (int i = 0; i < stderr.length; i++)
+        common.ptod("stderr: " + stderr[i]);
 
-    common.failure("'data_error=" + cmd + "' requested. Abort after first error");
+      /* Give master a little time to receive the message before we abort: */
+      common.sleep_some(1000);
+
+      common.failure("'data_errors='%s' requested. Abort after first error", cmd);
+    }
   }
 }
 

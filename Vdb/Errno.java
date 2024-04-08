@@ -31,6 +31,7 @@ public class Errno
 
     /* These values also reside in JNI code! */
     /* The '60003' message is hardcoded in DvPost() */
+    "  796 FORCED_ERROR     796 A debugging caused error                                      ",
     "  797 BAD_READ_RETURN  Read was successful, but data buffer contents not changed     ",
     "  798 INCORRECT_SIZE   Vdbench determined that not enough bytes were read or written ",
     "  799 ERRNO_ZERO       ERRNO contained zero after i/o error       ",

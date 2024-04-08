@@ -37,7 +37,7 @@ import Utils.Fput;
  *
  *
  */
-class ControlFile
+public class ControlFile
 {
   private final static String c =
   "Copyright (c) 2000, 2016, Oracle and/or its affiliates. All rights reserved.";
@@ -93,20 +93,26 @@ class ControlFile
     int existing_dirs = 0;
 
     Fput fp = new Fput(anchor.getAnchorName(), CONTROL_FILE);
+    running_checksum = 0;
 
-    fp.println("when  " + ((start) ? "start" : "end") + " " + new Date());
-    fp.println("depth " + anchor.depth);
-    fp.println("width " + anchor.width);
-    fp.println("files " + anchor.files);
-    fp.println("dist  " + anchor.dist);
+    printAndCheck(fp, "when  %s %s anchor=%s pid=%s", ((start) ? "start" : "end"),
+                  new Date(),
+                  anchor.getAnchorName(),
+                  common.getProcessIdString());
+    printAndCheck(fp, "depth " + anchor.depth);
+    printAndCheck(fp, "width " + anchor.width);
+    printAndCheck(fp, "files " + anchor.files);
+    printAndCheck(fp, "dist  " + anchor.dist);
     for (int i = 0; i < anchor.filesizes.length; i ++)
-      fp.println("size  " + (long) anchor.filesizes[i]);
+      printAndCheck(fp, "size  " + (long) anchor.filesizes[i]);
 
     /* No need for file status when shared: */
-    if (!shared)
+    if (shared)
+      fp.close();
+    else
     {
       Vector dirs = anchor.getDirList();
-      fp.println("directory status " + dirs.size());
+      printAndCheck(fp, "directory status " + dirs.size());
 
       /* Write the directory status: */
       for (int i = 0; i < dirs.size(); i++)
@@ -117,10 +123,10 @@ class ControlFile
         if (dir.exist())
         {
           existing_dirs++;
-          fp.println("y" + deb);
+          printAndCheck(fp, "y" + deb);
         }
         else
-          fp.println("n" + deb);
+          printAndCheck(fp, "n" + deb);
       }
 
       /* Write the file status: */
@@ -131,7 +137,7 @@ class ControlFile
       long   total_req      = 0;
       long   size_opened    = 0;
 
-      fp.println("file status " + sizes);
+      printAndCheck(fp, "file status " + sizes);
       for (int i = 0; i < sizes; i++)
       {
         FileEntry fe = (FileEntry) files.elementAt(i);
@@ -165,6 +171,23 @@ class ControlFile
           checksum += line.charAt(i);
       }
 
+      /* We have had problems with a corrupted checksum, because of course, */
+      /* the control file resides on the 'storage under test', but we also  */
+      /* have seen a few instances where the OS, after writing the file     */
+      /* above, and re-reading it DID NOT ALWAYS GET THE WHOLE FILE.        */
+      /* So the safest thing to do was to do the checksum twice:            */
+      /* - Keep a running checksum                                          */
+      /* - have the checksum be recalculated by re-reading the file.        */
+      /* And that checksum then must be the same already.                   */
+      if (checksum != running_checksum)
+      {
+        common.ptod("running_checksum: %12d", running_checksum);
+        common.ptod("checksum:         %12d", checksum);
+        common.ptod("delta:            %12d", checksum - running_checksum);
+        common.failure("Controlfile checksum failure. Corruption on Controlfile %s",
+                       fp.getName());
+      }
+
       /* Now add this checksum to the end: */
       fp = new Fput(fp.getName(), true);
       fp.println("checksum: %d ", checksum);
@@ -182,9 +205,17 @@ class ControlFile
       anchor.reportSizes(existing_files, existing_dirs, existing_bytes,
                          files_opened, size_opened);
     }
-
   }
 
+
+  private long running_checksum = 0;
+  private void printAndCheck(Fput fp, String format, Object ... args)
+  {
+    String line = String.format(format, args);
+    for (int i = 0; i < line.length(); i++)
+      running_checksum += line.charAt(i);
+    fp.println(line);
+  }
 
   /**
    * Write status of a FileEntry.
@@ -208,8 +239,8 @@ class ControlFile
     if (last)
     {
       if (duplicates > 0)
-        fp.println("= " + duplicates);
-      fp.println(getFileStatus(fe, index));
+        printAndCheck(fp, "= " + duplicates);
+      printAndCheck(fp, getFileStatus(fe, index));
       last_fe    = null;
       duplicates = 0;
       return;
@@ -236,8 +267,8 @@ class ControlFile
     else
     {
       if (duplicates > 0)
-        fp.println("= " + duplicates);
-      fp.println(getFileStatus(fe, index));
+        printAndCheck(fp, "= " + duplicates);
+      printAndCheck(fp, getFileStatus(fe, index));
       duplicates = 0;
     }
 
@@ -311,8 +342,14 @@ class ControlFile
       {
         long old_check = Long.parseLong(line.split(" +")[1]);
         if (checksum != old_check)
-          common.failure(" Corruption in control file '%s' Checksums: %d/%d",
-                         anchor.getAnchorName(), old_check, checksum);
+        {
+          if (common.get_debug(common.IGNORE_CHECKSUM))
+            common.ptod(" Corruption in control file '%s' ignored. Checksums: %d/%d",
+                        anchor.getAnchorName(), old_check, checksum);
+          else
+            common.failure(" Corruption in control file '%s'. Checksums: %d/%d",
+                           anchor.getAnchorName(), old_check, checksum);
+        }
         else
           checksum_found = true;
       }
@@ -354,7 +391,6 @@ class ControlFile
 
 
     /* This all must be valid: */
-    //common.ptod("when: " + when);
     if ((!when.equals("start") && !when.equals("end")) ||
         depth != anchor.depth ||
         width != anchor.width ||
@@ -401,7 +437,9 @@ class ControlFile
     }
 
     /* Ignore the rest of the CF when shared: */
-    if (!fwg.shared)
+    if (fwg.shared)
+      fg.close();
+    else
     {
       /* Read the directory info: */
       directory_status = new boolean[ Integer.parseInt(split[2]) ];
@@ -553,6 +591,54 @@ class ControlFile
     {
       anchors[i].getControlFile().writeControlFile(any_shared, false);
       anchors[i].clearControlFile();
+    }
+  }
+
+
+  /**
+   * Any time a file structure or file size changes save the state in the
+   * control file.
+   */
+  public static boolean keepControlFile(Vector <FwgEntry> fwgs_for_slave)
+  {
+    for (FwgEntry fwg : fwgs_for_slave)
+    {
+      if (fwg.getOperation() == Operations.WRITE)  return false;
+      if (fwg.getOperation() == Operations.CREATE) return false;
+      if (fwg.getOperation() == Operations.MKDIR)  return false;
+      if (fwg.getOperation() == Operations.RMDIR)  return false;
+      if (fwg.getOperation() == Operations.DELETE) return false;
+    }
+    return true;
+  }
+
+  public static void main(String[] args)
+  {
+    long checksum = 0;
+    boolean checksum_found = false;
+
+    for (String line : Fget.readFileToArray(args[0], CONTROL_FILE))
+    {
+      if (line.startsWith("checksum:"))
+      {
+        long old_check = Long.parseLong(line.split(" +")[1]);
+        if (checksum != old_check)
+        {
+          if (common.get_debug(common.IGNORE_CHECKSUM))
+            common.ptod(" Corruption in control file '%s' ignored. Checksums: %d/%d",
+                        args[0], old_check, checksum);
+          else
+            common.failure(" Corruption in control file '%s'. Checksums: %d/%d",
+                           args[0], old_check, checksum);
+        }
+        else
+          checksum_found = true;
+      }
+      for (int i = 0; i < line.length(); i++)
+      {
+        checksum += line.charAt(i);
+        common.ptod("checksum: %,12d %s", checksum, line);
+      }
     }
   }
 }

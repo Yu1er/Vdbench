@@ -279,10 +279,10 @@ public class CpuStats
 
     int slaves_working = SlaveList.countSlavesWithWork(RD_entry.next_rd);
     int per_slave      = (int) (Vdbmain.observed_iorate / slaves_working);
-    int limit          = 100000;
-    if (per_slave > limit)
+    if (per_slave > RD_entry.IOS_PER_JVM)
     {
-      box.add("Warning: total amount of i/o per second per slave (%d) greater than %d.", per_slave, limit);
+      box.add("Warning: total amount of i/o per second per slave (%,d) greater than %,d.",
+              per_slave,  RD_entry.IOS_PER_JVM);
       box.add("You may need to adjust your total slave count.");
       box.add("");
       box.add("See 'jvms=' in documentation for raw (SD/WD) workloads).");

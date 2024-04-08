@@ -33,11 +33,15 @@ class FwgEntry implements Serializable, Comparable
   public  double[]   xfersizes;
 
   public  boolean    select_random;
+  public  boolean    selseq_start0;
   public  boolean    select_once;
+  public  boolean    select_full;
+  public  boolean    select_empty;
+  public  boolean    select_nfull;
   public  double     poisson_skew = 0;
 
-
   public  boolean    sequential_io;
+  public  boolean    seq_io_start0;
   public  boolean    del_b4_write;
   public  boolean    file_sharing;
   public  boolean    shared;
@@ -52,6 +56,8 @@ class FwgEntry implements Serializable, Comparable
   public  long       total_size;
   public  long       working_set;
   public  String     dist;
+
+  public  boolean    work_done = false;
 
   private Random     xfer_size_randomizer = new Random(0); /* Fixed seed! */
 
@@ -91,8 +97,13 @@ class FwgEntry implements Serializable, Comparable
     xfersizes      = fwd.xfersizes;
     select_random  = fwd.select_random;
     select_once    = fwd.select_once;
+    select_full    = fwd.select_full;
+    select_empty   = fwd.select_empty;
+    select_nfull   = fwd.select_nfull;
+    selseq_start0  = fwd.selseq_start0;
     poisson_skew   = fwd.poisson_skew;
     sequential_io  = fwd.sequential_io;
+    seq_io_start0  = fwd.seq_io_start0;
     file_sharing   = fwd.file_sharing;
     del_b4_write   = fwd.del_b4_write;
     stopafter      = fwd.stopafter;
@@ -144,6 +155,10 @@ class FwgEntry implements Serializable, Comparable
     /* which will translate to the only define hist IF there is only one host. */
     //if (host_name.equals("*") && Host.getDefinedHosts().size() == 1)
     //  host_name = ((Host) Host.getDefinedHosts().firstElement()).getLabel();
+
+    /* If we know we'll be doing cloud stuff pass a CurlHandling instance to Fwg: */
+    if (fsd.cloud_url != null && anchor.curl == null)
+      anchor.curl = new CurlHandling(fsd);
   }
 
 

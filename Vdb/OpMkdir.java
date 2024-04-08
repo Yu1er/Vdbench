@@ -17,6 +17,9 @@ class OpMkdir extends FwgThread
   private final static String c =
   "Copyright (c) 2000, 2015, Oracle and/or its affiliates. All rights reserved.";
 
+
+  private boolean mkdir_max = (SlaveWorker.work.fwd_rate == RD_entry.MAX_RATE);
+
   public OpMkdir(Task_num tn, FwgEntry fwg)
   {
     super(tn, fwg);
@@ -37,12 +40,12 @@ class OpMkdir extends FwgThread
         return false;
       }
 
-      dir = fwg.anchor.getDir(fwg.select_random, format);
+      dir = fwg.anchor.getDir(fwg.select_random, format || mkdir_max);
       if (dir == null)
         return false;
 
       /* During a format we may give up as soon as the directory exists: */
-      if (format && dir.exist())
+      if ((format || mkdir_max) && dir.exist())
       {
         //common.ptod("DIR_EXISTS: " + dir.buildFullName());
         block(Blocked.DIR_EXISTS);
@@ -114,7 +117,7 @@ class OpMkdir extends FwgThread
         block(Blocked.MISSING_PARENT, dir.getFullName());
         //common.ptod("mkdir missing parent: " + dir.getFullName());
 
-        if (format)
+        if (format || mkdir_max)
           common.sleep_some_usecs(200);
 
         continue;
@@ -146,7 +149,7 @@ class OpMkdir extends FwgThread
       fwg.blocked.count(Blocked.DIRECTORY_CREATES);
 
     /* No locking required, since this (the parent) is still busy: */
-    if (format)
+    if (format || mkdir_max)
       createChildren(dir.getChildren());
 
     dir.getParent().setBusy(false);

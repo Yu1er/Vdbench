@@ -31,6 +31,10 @@ import Utils.Getopt;
  * ./vdbench Vdb.ShowLba output/localhost-0.faketrace.txt
  *
  * (Should probably allow concatenation of all trace files?)
+ *
+ *
+ * Note: 32bit java on Linux caused problems wen using jre1.7.0_05, code was
+ * looking for 'awt'. Fix: no 'ShowLba trace creation' on 32bit.
  */
 public class ShowLba extends JPanel implements ActionListener
 {
@@ -164,7 +168,13 @@ public class ShowLba extends JPanel implements ActionListener
       }
       color_index = sds_found.indexOf(tl.sd);
 
-      tl.color = colors[color_index];
+      /* Change the color for reads vs writes. */
+      /* This MAY cause problems when we reuse colors. */
+      // we may already have a problem when we have loads of colors......
+      if (tl.read_flag)
+        tl.color = colors[color_index];
+      else
+        tl.color = colors[(color_index+1) % colors.length];
 
       data.add(tl);
       if (tl.read_flag)
@@ -331,7 +341,8 @@ public class ShowLba extends JPanel implements ActionListener
     legend.setBorder(new EtchedBorder(EtchedBorder.RAISED,Color.white,new Color(178, 178, 178)));
 
     Collections.sort(sds_found);
-    String txt2 = "  Legend: Vertical axis: time, Horizontal axis: lba;  Each SD has its own color; SDs found: ";
+    String txt2 = "  Legend: Vertical axis: time, Horizontal axis: lba;  "+
+                  "Each SD has its own color for reads or writes; SDs found: ";
     for (String sd : sds_found)
       txt2 += sd + " ";
     txt2 += " for help, run ./vdbench showlba -h";

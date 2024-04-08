@@ -10,6 +10,7 @@ package Vdb;
 
 import java.io.File;
 import java.io.Serializable;
+import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.HashMap;
 import java.util.Vector;
@@ -71,6 +72,17 @@ public class Dedup implements Serializable, Cloneable
   public  static Dedup    dedup_default = new Dedup();
   public  static boolean  any_hotsets_requested = false;
 
+  //wen:added
+  private int[]   key_of_set = null;
+  private long[]   main_lba_of_set = null;
+  public  ArrayList <Long> dedup_set_lbas = null;
+  public  int[]   set_index_start = null;
+  //wen:added
+  public  long    unique_lbas      = 0;
+  public  long    duplicate_lbas   = 0;
+  public  long    unique_writes    = 0;
+  public  long    duplicate_writes = 0;
+  public  long    fail_duplicate_writes = 0;
 
   /* These fields are also used in vdbjni.h and vdb_dv.c
      (first 32 bits)
@@ -151,8 +163,30 @@ public class Dedup implements Serializable, Cloneable
   {
     return dedup_ratio;
   }
-
-
+  public long getDedupSetsUsed()
+  {
+    return dedup_sets_used;
+  }
+  public int getSetID(long lba)
+  {
+    return (int) ((lba / getDedupUnit()) % dedup_sets_used);
+  }
+  public int GetKeyofDedupSet(long lba)
+  {
+    return key_of_set[getSetID(lba)];
+  }
+  public void SetKeyofDedupSet(long lba, int key)
+  {
+    key_of_set[getSetID(lba)] = key;
+  }
+  public long GetMainLBAofSet(long lba)
+  {
+    return main_lba_of_set[getSetID(lba)];
+  }
+  public void SetMainLBAofSet(long lba, long main_lba)
+  {
+    main_lba_of_set[getSetID(lba)] = main_lba;
+  }
   /**
    * Reporting all Dedup information.
    *
@@ -278,8 +312,10 @@ public class Dedup implements Serializable, Cloneable
       long pattern_lba = afe.getFileEntry().getFileStartLba() +
                          afe.next_lba + key_map.getKeyBlockSize() * i;
       long pattern_blk = pattern_lba / dedup_unit;
-      int  rel_block   = (int) ((pattern_lba / dedup_unit) + anchor_offset / dedup_unit);
-      boolean unique   = dedup_pct == 100 || anchor.getDedupBitMap().isUnique(pattern_blk);
+
+      /* Changed to a long for 50407: */
+      long    rel_block = ((pattern_lba / dedup_unit) + anchor_offset / dedup_unit);
+      boolean unique    = dedup_pct == 100 || anchor.getDedupBitMap().isUnique(pattern_blk);
 
 
       /* Uniqueness must be calculated using 'dedupunit=' boundaries: */
@@ -379,7 +415,11 @@ public class Dedup implements Serializable, Cloneable
       long pattern_lba  = key_map.pattern_lba + dedup_unit * i;
       long pattern_blk  = pattern_lba / dedup_unit;
       long rel_block    = pattern_blk + sd.sdd.rel_byte_start / dedup_unit;
-      boolean unique    = dedup_pct == 100. || sd.sdd.uniques_bitmap.isUnique(pattern_blk);
+      // boolean unique    = dedup_pct == 100. || sd.sdd.uniques_bitmap.isUnique(pattern_blk);
+
+      //wen:modified
+      boolean unique = ((double)(unique_writes + duplicate_writes) / (unique_writes+1)) >= dedup_ratio && key_map.getKeys()[i] != GetKeyofDedupSet(pattern_lba);
+      // boolean unique = ((double)(unique_writes + duplicate_writes) / (unique_writes+1)) >= dedup_ratio && pattern_lba != GetMainLBAofSet(pattern_lba);
 
       /* The first hot blocks may of course NOT be unique: */
       // this has been taken care of in the bitmap already?
@@ -400,6 +440,8 @@ public class Dedup implements Serializable, Cloneable
 
         /* Set compression offset. */
         compression = getUniqueCompressionOffset(pattern_lba);
+
+        unique_lbas++;
       }
 
       /* For a duplicate, compression offset and set number are related: */
@@ -407,9 +449,9 @@ public class Dedup implements Serializable, Cloneable
       {
         dedup_set   = sd.sdd.translateDuplicateBlockToSet(rel_block);
         compression = getDuplicateCompressionOffset(dedup_set);
+
+        duplicate_lbas++;
       }
-
-
 
       /* Dedup does not use a 'key', it has a 'flipflop': */
       int key    = key_map.getKeys()[i];
@@ -457,6 +499,78 @@ public class Dedup implements Serializable, Cloneable
     }
   }
 
+  /**
+   * Print last referenced timestamps for a specific dedupset.
+   * This may be helpful determining why we have a corruption in a duplicate
+   * block.
+   */
+  private static SimpleDateFormat df = new SimpleDateFormat( "yyyy/MM/dd-HH:mm:ss.SSS" );
+  private static HashMap <Long, Long> done_map = new HashMap(32);
+  public static ArrayList <String> reportDedupSetTimes(long set)
+  {
+    ArrayList <String> lines = new ArrayList(4096);
+
+    if (!Validate.isStoreTime())
+      return null;
+    if (!Validate.reportDedupsets())
+      return null;
+
+    /* A set will be reported only once: */
+    long set_number = set & DEDUPSET_NUMBER_MASK;
+    long set_type   = (set & DEDUPSET_TYPE_MASK) >> 32;
+    if (done_map.put(set, set) != null)
+    {
+      lines.add(String.format("Dedupset type: %02x set: %08x was reported earlier",
+                              set_type, set_number));
+      return lines;
+    }
+
+    /* Scan through all SDs looking for the type and set: */
+    for (SD_entry sd : SD_entry.getRealSds(SlaveWorker.sd_list))
+    {
+      Dedup dedup = sd.sdd.dedup;
+      if (set_type != dedup.dedup_type)
+        continue;
+
+      int dedup_unit = getDedupUnit();
+
+      /* Do calculations for each Key block: */
+      for (long lba = 0; lba < sd.end_lba; lba += dedup_unit)
+      {
+        long pattern_blk  = lba / dedup_unit;
+        long rel_block    = pattern_blk + sd.sdd.rel_byte_start / dedup_unit;
+        boolean duplicate = dedup.dedup_pct == 100. || sd.sdd.uniques_bitmap.isDuplicate(pattern_blk);
+
+        if (!duplicate)
+          continue;
+
+        long this_set = sd.sdd.translateDuplicateBlockToSet(rel_block);
+        if (this_set == set_number)
+        {
+          long   tod  = sd.dv_map.getLastTimestamp(lba);
+          String last = sd.dv_map.getLastOperation(lba);
+          int    key  = sd.dv_map.getLastKey(lba);
+          if (tod != 0 && key == 0)
+            lines.add(String.format("   %23s sd: %s lba: %08x type: %02d set: %08x key: %02x %s",
+                                    df.format(new Date(tod)),
+                                    sd.sd_name, lba, set_type, set_number, key, "Read, never written"));
+          else if (tod == 0)
+            lines.add(String.format("   %23s sd: %s lba: %08x type: %02d set: %08x %s",
+                                    "", sd.sd_name, lba, set_type, set_number, "Never read or written"));
+          else
+            lines.add(String.format("   %23s sd: %s lba: %08x type: %02d set: %08x key: %02x %s",
+                                    df.format(new Date(tod)),
+                                    sd.sd_name, lba, set_type, set_number, key, last));
+        }
+      }
+    }
+
+    Collections.sort(lines);
+    //for (String line : lines)
+    //  common.ptod(line);
+    return lines;
+  }
+
 
 
 
@@ -477,7 +591,7 @@ public class Dedup implements Serializable, Cloneable
     double sets   = (dedup_sets_reqd > 0) ? dedup_sets_reqd :
                     blocks * Math.abs(dedup_sets_reqd) / 100;
 
-    /* Create an adjusted dedup%: */
+    /* Create an adjusted dedup%: */  
     dedup_adjusted  = Math.max((dedup_pct - (sets * 100. / blocks)), 0);
     dedup_adjusted  = (dedup_pct == 100) ? 100 : dedup_adjusted;
     dedup_sets_used = Math.max(1, (long) sets);
@@ -536,6 +650,18 @@ public class Dedup implements Serializable, Cloneable
       common.failure("You do not have enough dedup sets. You are requested more "+
                      "hot dedup sets (%d) than you have dedup sets (%d)",
                      hot_dedup_sets, dedup_sets_used);
+    }
+
+    //wen:added
+    if (key_of_set == null) {
+      key_of_set = new int [(int) dedup_sets_used];
+      for(int i=0; i<dedup_sets_used; i++)
+        key_of_set[i] = 1;
+    }
+    if (main_lba_of_set == null) {
+      main_lba_of_set = new long [(int) dedup_sets_used];
+      for(int i=0; i<dedup_sets_used; i++)
+        main_lba_of_set[i] = -1;
     }
   }
 
@@ -999,6 +1125,12 @@ public class Dedup implements Serializable, Cloneable
     addLine("flipflops",          "%,15d", flipflops);
     //addLine("est_sets_pct",       "%15.2f", est_sets_pct);
 
+    //wen:added 
+    addLine("unique_lbas",    "%,15d;",  unique_lbas);
+    addLine("duplicate_lbas",    "%,15d;",  duplicate_lbas);
+    addLine("unique_writes",    "%,15d;",  unique_writes);
+    addLine("duplicate_writes",    "%,15d;",  duplicate_writes);
+    addLine("fail_duplicate_writes",    "%,15d;",  fail_duplicate_writes);
 
     /* Note that rounding issues can cause a MINOR delta with the requested ratio */
     double calc_ratio  =  ((double) unit_blocks / (unique_blocks + dedup_sets_used));

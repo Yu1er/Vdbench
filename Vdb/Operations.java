@@ -20,19 +20,21 @@ class Operations
 
   private static String[] operations =
   {
-    "read",
-    "write",
-    "mkdir",
-    "rmdir",
-    "copy",
-    "move",
-    "create",
-    "delete",
-    "getattr",
-    "setattr",
-    "access",
-    "open",
-    "close"
+    "read",         //  0
+    "write",        //  1
+    "mkdir",        //  2
+    "rmdir",        //  3
+    "copy",         //  4
+    "move",         //  5
+    "create",       //  6
+    "delete",       //  7
+    "getattr",      //  8
+    "setattr",      //  9
+    "access",       // 10
+    "open",         // 11
+    "close",        // 12
+    "put",          // 13
+    "get"           // 14
 
     // we should add a 'backward sequential' file selection?
   };
@@ -41,19 +43,21 @@ class Operations
 
   private static boolean[] operations_used = new boolean[64];
 
-  public static final int READ    = addOperation("Read");
-  public static final int WRITE   = addOperation("Write");
-  public static final int MKDIR   = addOperation("Mkdir");
-  public static final int RMDIR   = addOperation("Rmdir");
-  public static final int COPY    = addOperation("Copy");
-  public static final int MOVE    = addOperation("Move");
-  public static final int CREATE  = addOperation("Create");
-  public static final int DELETE  = addOperation("Delete");
-  public static final int GETATTR = addOperation("Getattr");
-  public static final int SETATTR = addOperation("Setattr");
-  public static final int ACCESS  = addOperation("Access");
-  public static final int OPEN    = addOperation("Open");
-  public static final int CLOSE   = addOperation("Close");
+  public static final int READ    = addOperation("Read");       //  0
+  public static final int WRITE   = addOperation("Write");      //  1
+  public static final int MKDIR   = addOperation("Mkdir");      //  2
+  public static final int RMDIR   = addOperation("Rmdir");      //  3
+  public static final int COPY    = addOperation("Copy");       //  4
+  public static final int MOVE    = addOperation("Move");       //  5
+  public static final int CREATE  = addOperation("Create");     //  6
+  public static final int DELETE  = addOperation("Delete");     //  7
+  public static final int GETATTR = addOperation("Getattr");    //  8
+  public static final int SETATTR = addOperation("Setattr");    //  9
+  public static final int ACCESS  = addOperation("Access");     // 10
+  public static final int OPEN    = addOperation("Open");       // 11
+  public static final int CLOSE   = addOperation("Close");      // 12
+  public static final int PUT     = addOperation("Put");        // 13
+  public static final int GET     = addOperation("Get");        // 14
 
 
   private static int addOperation(String operation)
@@ -106,15 +110,4 @@ class Operations
     return operations.length;
   }
 
-  public static boolean keepControlFile(Vector <FwgEntry> fwgs_for_slave)
-  {
-    for (FwgEntry fwg : fwgs_for_slave)
-    {
-      if (fwg.getOperation() == Operations.CREATE) return false;
-      if (fwg.getOperation() == Operations.MKDIR) return false;
-      if (fwg.getOperation() == Operations.RMDIR) return false;
-      if (fwg.getOperation() == Operations.DELETE) return false;
-    }
-    return true;
-  }
 }

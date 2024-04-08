@@ -115,6 +115,7 @@ public class Jnl_entry
   /* Note: these values can be overridden to allow for a larger journal entry */
   /* size, containing a timestamp.                                            */
   /* A journal created with this will have array[7] set in the MAP header.    */
+  /* This has not been tested in a long long time, no may no longer work!     */
   private static boolean JOURNAL_ADD_TIMESTAMP = false;
   private static int JNL_IO_SIZE     = 512;
   private static int JNL_IO_SIZE_EOF = 1024;
@@ -202,6 +203,7 @@ public class Jnl_entry
     }
 
     /* Open the journal and map files here (use 'fast' access): */
+    plog("Creating journal file %s", jnl_file_name);
     openFiles(true);
   }
 
@@ -450,7 +452,7 @@ public class Jnl_entry
     if (!Validate.isJournaling())
       return;
 
-    if (common.get_debug(common.DONT_DUMP_MAPS))
+    if (end_of_run && common.get_debug(common.DONT_DUMP_MAPS))
     {
       /* For file system formatting: */
       if (!SlaveWorker.work.format_run)
@@ -752,7 +754,7 @@ public class Jnl_entry
     jnl_array[6] = right32(dump_journal_tod);
 
     jnl_array[7] = (JOURNAL_ADD_TIMESTAMP) ? 1 : 0;
-    jnl_array[8] = 0;
+    jnl_array[8] = SlaveJvm.getOwnerId();
 
     Native.arrayToBuffer(jnl_array, jnl_native_buffer);
     jnl_write(handle, 0, 512, jnl_native_buffer);
@@ -809,7 +811,7 @@ public class Jnl_entry
     jnl_array[6] = right32(dump_journal_tod);
 
     jnl_array[7] = (JOURNAL_ADD_TIMESTAMP) ? 1 : 0;
-    jnl_array[8] = 0;
+    jnl_array[8] = SlaveJvm.getOwnerId();
 
     Native.arrayToBuffer(jnl_array, jnl_native_buffer);
     jnl_write(handle, 0, 512, jnl_native_buffer);
@@ -896,6 +898,9 @@ public class Jnl_entry
       overrideConstants();
     }
 
+    /* Pick up the owner ID: */
+    SlaveJvm.setOwnerId(jnl_array[8]);
+
     /* Compare length: */
     if (max_lba / key_blksize != key_blocks)
     {
@@ -962,7 +967,11 @@ public class Jnl_entry
   public static void recoverSDJournalsIfNeeded(Vector sd_list)
   {
     if (!Validate.isJournalRecovery() || Validate.isJournalRecovered())
+    {
+      SlaveJvm.sendMessageToMaster(SocketMessage.ONE_TIME_STATUS,
+                                   "Data Validation Owner ID: "+ SlaveJvm.getOwnerId());
       return;
+    }
 
     for (int i = 0; i < sd_list.size(); i++)
     {
@@ -1052,6 +1061,7 @@ public class Jnl_entry
     boolean debug   = false;
     long    before  = 0;
     long    after   = 0;
+    long    errors  = 0;
     long    lba;
     int     newkey;
 
@@ -1111,12 +1121,15 @@ public class Jnl_entry
         //debug = false;
 
 
-        // There is an opportunity here to tighten up the code:
-        // compare NEW key with previous one. If 5 goes to 4 we have a problem!
-
+        /* This indicates that the write failed, and the block should never be touched again: */
+        if (newkey == DV_map.DV_ERROR)
+        {
+          errors ++;
+          before_map.dv_set_nolock(lba, DV_map.DV_ERROR);
+        }
 
         /* A nonzero key indicates this is a 'before' journal entry: */
-        if (newkey != 0)
+        else if (newkey != 0)
         {
           before++;
 
@@ -1135,9 +1148,10 @@ public class Jnl_entry
             if (debug) common.ptod("old key 0, before_map set to pending. lba: %08x", lba);
             before_map.dv_set_nolock(lba, DV_map.PENDING_KEY_0);
 
-            /* The new key then must be '1': */
-            if (newkey != 1)
-              common.failure("Expecting DV key 1 for lba %08x", lba);
+            /* This check removed after we started each key with a random value */
+            /* instead of always with one. */
+            //if (newkey != 1)
+            //  common.failure("Expecting DV key 1 for lba %08x", lba);
           }
 
           /* If the old key was 126, rolling over from 126 to 1: */
@@ -1152,10 +1166,13 @@ public class Jnl_entry
           }
 
           /* With Dedup we roll over from 2 to 1 for duplicate blocks: */
-          else if (current_map.dv_get_nolock(lba) == 2 && newkey == 1)
+          /* This makes 'random starting key for flipflop impossible:  */
+          /* But maybe if newkey < current key and NOT 126 (126 is taken care off above) */
+          else if (current_map.dv_get_nolock(lba) > newkey )
           {
             if (!Dedup.isDedup())
-              common.failure("Out of sync data validation key found in journal");
+              common.failure("Out of sync data validation key %02x/%02x found in journal for lba 0x%08x",
+                             current_map.dv_get_nolock(lba), newkey, lba);
 
             if (debug) common.ptod("old key 0, before_map set to pending. lba: %08x", lba);
             before_map.dv_set_nolock(lba, DV_map.PENDING_KEY_ROLL_DEDUP);
@@ -1295,7 +1312,7 @@ public class Jnl_entry
         /* This is the MAP: */
         if (array[0] == MAP_EYE_CATCHER)
         {
-          /* Determine if the journale entries contain a timestamp: */
+          /* Determine if the journal entries contain a timestamp: */
           if (array[7] == 1)
           {
             common.set_debug(common.JOURNAL_ADD_TIMESTAMP);
@@ -1309,8 +1326,9 @@ public class Jnl_entry
             long tod = (long) array[4] << 32;
             tod += array[5];
             saved_journal_tod = array[5];
-            common.ptod("dump_journal_tod: %016x %s", tod, new Date(tod));
+            common.ptod("dump_journal_tod:  %016x %s", tod, new Date(tod));
             common.ptod("saved_journal_tod: %08x", saved_journal_tod);
+            common.ptod("Owner ID:              " + array[8]);
           }
 
           /* Store the map's (key) xfersize: */

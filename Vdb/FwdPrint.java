@@ -146,7 +146,14 @@ public class FwdPrint
   protected String getData(double data)
   {
     return Format.f(" %" + fmt2 + "F", data);
-    //return String.format(" %" + fmt2 + "f", data);
+  }
+  protected String getDataZ(double data)
+  {
+    String col1;
+    if (data == 0)
+      return String.format(" %" + fmt2 + "s", "");
+    else
+      return Format.f(" %" + fmt2 + "F", data);
   }
 
 
@@ -158,9 +165,25 @@ public class FwdPrint
     String txt = Format.f(" %" + fmt2a + "F", data1) +
                  Format.f(" %" + fmt2b + "F", data2);
 
-    //String txt = String.format(" %" + fmt2a + "f %" + fmt2b + "f", data1, data2);
-
     return txt;
+  }
+
+  protected String getDataZ(double data1, double data2)
+  {
+    String col1;
+    String col2;
+
+    if (data1 == 0.0)
+      col1 = String.format(" %" + fmt2a + "s", "");
+    else
+      col1 = Format.f(" %" + fmt2a + "F", data1);
+
+    if (data2 == 0.0)
+      col2 = String.format(" %" + fmt2b + "s", "");
+    else
+      col2 = Format.f(" %" + fmt2b + "F", data2);
+
+    return col1 + col2;
   }
 
   /**

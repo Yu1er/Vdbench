@@ -46,6 +46,13 @@ public class FwdReport extends Report
           continue;
 
         Report.getReport(slave).getData().reportInterval(kstat_cpu);
+
+        /* Create all slave FSD reports: */
+        if (slave_detail)
+        {
+          for (String fsdname : slave.getFsdsUsed())
+            slave.getReport(fsdname).getData().reportInterval(kstat_cpu);
+        }
       }
 
       Report.getReport(host).getData().reportInterval(kstat_cpu);
@@ -115,6 +122,13 @@ public class FwdReport extends Report
           continue;
 
         Report.getReport(slave).getData().reportFwdTotal(kstat_cpu, avg);
+
+        /* Create all slave FSD reports: */
+        if (slave_detail)
+        {
+          for (String fsdname : slave.getFsdsUsed())
+            slave.getReport(fsdname).getData().reportFwdTotal(kstat_cpu, avg);
+        }
       }
 
       Report.getReport(host).getData().reportFwdTotal(kstat_cpu, avg);
@@ -127,14 +141,20 @@ public class FwdReport extends Report
     FwdStats fwd_total  = Report.getSummaryReport().getData().getTotalFwdStats();
 
     /* Now report these numbers: */
-    fwd_total.printLine(Report.getSummaryReport(), kstat_cpu, avg);
+    fwd_total.printLineL(Report.getSummaryReport(), kstat_cpu, avg);
+    fwd_total.printStdLine(Report.getSummaryReport(), kstat_cpu, avg);
+    fwd_total.printMaxLine(Report.getSummaryReport(), kstat_cpu, avg);
     if (!Vdbmain.kstat_console)
-      fwd_total.printLine(Report.getStdoutReport(), kstat_cpu, avg);
+    {
+      fwd_total.printLineL(Report.getStdoutReport(), kstat_cpu, avg);
+      fwd_total.printStdLine(Report.getStdoutReport(), kstat_cpu,avg);
+      fwd_total.printMaxLine(Report.getStdoutReport(), kstat_cpu,avg);
+    }
 
     /* Write the run total also in the totals file: */
     if (total_header_lines++ % 10 == 1)
       fwd_total.printHeaders(Report.getTotalReport());
-    fwd_total.printLine(Report.getTotalReport(), kstat_cpu, avg);
+    fwd_total.printLineL(Report.getTotalReport(), kstat_cpu, avg);
 
     fwd_total.writeFlat(avg, kstat_cpu);
     if (CpuStats.isCpuReporting())
@@ -146,8 +166,8 @@ public class FwdReport extends Report
 
     /* Report summary histogram: */
     Report report = Report.getReport("histogram");
-    String title = "Total of all requested operations: ";
-    report.println(fwd_total.getTotalHistogram().printHistogram(title));
+    String title = "Total of all requested operations since warmup: ";
+    report.println(fwd_total.getReqstdHistogram().printHistogram(title));
 
     for (int i = 0; i < FsdEntry.getFsdList().size(); i++)
     {
@@ -156,7 +176,7 @@ public class FwdReport extends Report
       /* Report summary histogram: */
       report        = Report.getReport(fsd, "histogram");
       ReportData rs = report.getData();
-      report.println(rs.getTotalFwdStats().getTotalHistogram().printHistogram(title));
+      report.println(rs.getTotalFwdStats().getReqstdHistogram().printHistogram(title));
     }
 
     for (int i = 0; i < FwdEntry.getFwdList().size(); i++)
@@ -166,7 +186,7 @@ public class FwdReport extends Report
       /* Report summary histogram: */
       report        = Report.getReport(fwd, "histogram");
       ReportData rs = report.getData();
-      report.println(rs.getTotalFwdStats().getTotalHistogram().printHistogram(title));
+      report.println(rs.getTotalFwdStats().getReqstdHistogram().printHistogram(title));
 
       /* There is a bug: when running multiple formats there are multiple    */
       /* format FWDs and the code is writing a line for each possible format */
@@ -176,6 +196,105 @@ public class FwdReport extends Report
     }
 
     return fwd_total;
+  }
+
+
+  /**
+   * Create Slave SD reports for a specific host
+   */
+  public static void createSlaveFsdReports(Host host)
+  {
+    /* Create all slave SD reports: */
+    for (Slave slave : host.getSlaves())
+    {
+      for (String fsdname : slave.getFsdsUsed())
+      {
+        Report report = new Report(slave, fsdname,
+                                   "Slave FSD report for fsd=" + fsdname, slave_detail);
+        slave.addReport(fsdname, report);
+
+        if (slave_detail)
+        {
+          String txt = "fsd=" + fsdname;
+          slave.getSummaryReport().printHtmlLink("Links to slave FSD reports",
+                                                 report.getFileName(), txt);
+        }
+      }
+    }
+  }
+
+
+  /**
+   * Create SD reports for all hosts.
+   * (Only done when there is more than one host. Avoids duplication of reports)
+   */
+  public static void createHostFsdReports()
+  {
+    for (Host host : Host.getDefinedHosts())
+    {
+      String[] fsds = getFsdsUsedForHost(host);
+      Arrays.sort(fsds, new SdSort());
+
+      /* Create all host SD reports: */
+      //if (host_detail)
+      {
+        for (String fsdname : fsds)
+        {
+          String txt = "Host FSD report for fsd=" + fsdname + ",host=" + host.getLabel();
+          Report report = new Report(host, fsdname, txt, host_detail);
+          host.addReport(fsdname, report);
+
+          txt = "fsd=" + fsdname;
+          host.getSummaryReport().printHtmlLink("Link to host FSD reports",
+                                                report.getFileName(), txt);
+        }
+      }
+
+      createSlaveFsdReports(host);
+    }
+  }
+
+
+
+  /**
+   * Return Fsds used for a host
+   */
+  public static String[] getFsdsUsedForHost(Host host)
+  {
+    HashMap <String, String> map = new HashMap(16);
+
+    for (RD_entry rd : Vdbmain.rd_list)
+    {
+      for (FwgEntry fwg : rd.fwgs_for_rd)
+      {
+        if (fwg.host_name.equals(host.getLabel()))
+          map.put(fwg.fsd_name, fwg.fsd_name);
+      }
+    }
+
+    return map.keySet().toArray(new String[0]);
+  }
+
+
+  /**
+   * This is a shortcut: I need to do this better, looking only for the SLAVE,
+   * not the host.
+   * For now this will have to do.
+   */
+  public static String[] getFsdsUsedForSlave(Slave slave)
+  {
+    HashMap <String, String> map = new HashMap(16);
+
+    for (RD_entry rd : Vdbmain.rd_list)
+    {
+      for (FwgEntry fwg : rd.fwgs_for_rd)
+      {
+        if (fwg.host_name.equals(slave.getHost().getLabel()))
+          map.put(fwg.fsd_name, fwg.fsd_name);
+      }
+    }
+
+    return map.keySet().toArray(new String[0]);
   }
 }
 

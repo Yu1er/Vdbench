@@ -54,7 +54,8 @@ public class Rsh
         socket_to_remote.setSlaveName("rsh_to_client");
 
         /* Set timeout */
-        socket_to_remote.getSocket().setSoTimeout(10 * 60 * 1000);
+        /* 10 minutes caused too many messages when using 200 clients! */
+        socket_to_remote.getSocket().setSoTimeout(60 * 60 * 1000);
 
         common.ptod("Successfully connected to the Vdbench rsh daemon on host " + host);
       }

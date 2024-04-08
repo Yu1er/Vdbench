@@ -93,6 +93,14 @@ public class PrintJournal
       }
       Native.buffer_to_array(array, buffer, 512);
 
+      /* This is the tod of the map dump: */
+      if (array[5] != 0 && array[6] != 0)
+      {
+        SimpleDateFormat dv_df = new SimpleDateFormat( "EEE MMM dd yyyy HH:mm:ss.SSS zzz" );
+        String dt = dv_df.format(new Date(Jnl_entry.make64(array[5], array[6])) );
+
+        common.ptod("array[5+6]: %08x %08x %s", array[5], array[6], dt);
+      }
 
       /* This is the MAP: */
       if (array[0] == Jnl_entry.MAP_EYE_CATCHER)
@@ -212,14 +220,18 @@ public class PrintJournal
                                       array[ Jnl_entry.JNL_SKIP_HDR + (j * Jnl_entry.JNL_ENT_INTS) + 3 ]);
           String date = df.format(new Date(tod));
 
-          if (key != 0)
+          if (key == DV_map.DV_ERROR)
+            common.ptod("Error:   lba: 0x%012x key: 0x%02x tod: %s", lba, key, date);
+          else if (key != 0)
             common.ptod("Before:  lba: 0x%012x key: 0x%02x tod: %s", lba, key, date);
           else
             common.ptod("After:   lba: 0x%012x           tod: %s", lba, date);
         }
         else
         {
-          if (key != 0)
+          if (key == DV_map.DV_ERROR)
+            common.ptod("Error:   lba: 0x%012x key: 0x%02x  ", lba, key);
+          else if (key != 0)
             common.ptod("Before:  lba: 0x%012x key: 0x%02x  ", lba, key);
           else
             common.ptod("After:   lba: 0x%012x ", lba);

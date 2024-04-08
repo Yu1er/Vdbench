@@ -208,12 +208,12 @@ public class BadDataBlock
 
         if (sd != null)
           plog("Corrupted data block for sd=%s,lun=%s; lba: %,d (0x%08x) xfersize=%d",
-                sd.sd_name, bdb.lun, file_lba, file_lba, bdb.data_blksize);
+               sd.sd_name, bdb.lun, file_lba, file_lba, bdb.data_blksize);
         else
           plog("Corrupted data block for fsd=%s,file=%s; file lba: 0x%08x xfersize=%d",
-                afe.getFileEntry().getAnchor().fsd_name_active,
-                afe.getFileEntry().getFullName(),
-                file_lba, bdb.data_blksize);
+               afe.getFileEntry().getAnchor().fsd_name_active,
+               afe.getFileEntry().getFullName(),
+               file_lba, bdb.data_blksize);
 
         plog("");
         plog("Data block has %d key block(s) of %d bytes each.", bdb.key_blocks, bdb.key_blksize);
@@ -247,6 +247,42 @@ public class BadDataBlock
     }
 
     return false;
+  }
+
+
+
+  /**
+   * 'data_errors=script' needs the information about the first failure.
+   * Since normal processing REMOVES the information after reporting we need to
+   * pick it up and preserve it early.
+   */
+  public static BadSector getFirstBadSector(Object sd_or_fsd,
+                                            long   file_lba,
+                                            long   file_start_lba)
+  {
+
+    HashMap <Long, BadDataBlock> bad_data_map = null;
+    SD_entry     sd  = null;
+    ActiveFile   afe = null;
+    if (sd_or_fsd instanceof SD_entry)
+    {
+      sd           = (SD_entry) sd_or_fsd;
+      bad_data_map = sd.bad_data_map;
+    }
+    else
+    {
+      afe          = (ActiveFile) sd_or_fsd;
+      bad_data_map = afe.getFileEntry().getAnchor().bad_data_map;
+    }
+
+    /* We must have at least seen one BadSector for this data block: */
+    BadDataBlock bdb = bad_data_map.get(file_lba + file_start_lba);
+    if (bdb == null)
+      common.failure("Lba can not be found in bad data map: " + file_lba);
+
+    BadKeyBlock first_bkb  = bdb.getBadKeyBlocks().get(0);
+    BadSector   first_bads = first_bkb.getSectors().get(0);
+    return first_bads;
   }
 
   private static boolean header_printed = false;
@@ -287,8 +323,8 @@ public class BadDataBlock
       plog("Byte 0x11        : Checksum of timestamp ");
       plog("Byte 0x12 -  0x13: Reserved ");
       plog("Byte 0x14 -  0x1b: SD or FSD name in ASCII hexadecimal ");
-      plog("Byte 0x1c -  0x1f: Process-id when written ");
-      //plog("Byte 0x1c -  0x1f: Process-id when not using journaling or validate=continue        ");
+      plog("Byte 0x1c -  0x1f: Owner ID when written ");
+      //plog("Byte 0x1c -  0x1f: Owner ID when not using journaling or validate=continue        ");
 
       if (!Validate.isCompression())
         plog("Byte 0x20 - 0x1ff: 480 bytes of LFSR based data");
@@ -308,8 +344,8 @@ public class BadDataBlock
         plog("Byte 0x11        : Checksum of timestamp");
         plog("Byte 0x12 -  0x13: Reserved");
         plog("Byte 0x14 -  0x1b: SD or FSD name in ASCII hexadecimal");
-        plog("Byte 0x1c -  0x1f: Process-id when written ");
-        //plog("Byte 0x1c -  0x1f: Process-id when not using journaling or validate=continue ");
+        plog("Byte 0x1c -  0x1f: Owner ID when written ");
+        //plog("Byte 0x1c -  0x1f: Owner ID when not using journaling or validate=continue ");
         plog("Byte 0x20 - 0x1ff: 480 bytes of compression data pattern");
         //print("(When the data compare of the 480 data bytes results in a mismatch ONLY because of a wrong ");
         //print(" Data Validation key and/or wrong lba the reporting of that data will be suppressed.)");

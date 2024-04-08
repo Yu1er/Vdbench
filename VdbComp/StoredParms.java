@@ -1,12 +1,12 @@
 package VdbComp;
-    
-/*  
- * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved. 
- */ 
-    
-/*  
- * Author: Henk Vandenbergh. 
- */ 
+
+/*
+ * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.
+ */
+
+/*
+ * Author: Henk Vandenbergh.
+ */
 
 import java.awt.Color;
 import java.io.*;
@@ -22,8 +22,8 @@ import Utils.common;
  */
 public class StoredParms
 {
-  private final static String c = 
-  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved."; 
+  private final static String c =
+  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.";
 
   static int last_width  = 800;
   static int last_height = 400;
@@ -46,13 +46,7 @@ public class StoredParms
     {
       String[] split = line.trim().split(" +");
 
-      if (split[0].equals("old"))
-        WlComp.old_dir = line.substring(4);
-
-      else if (split[0].equals("new"))
-        WlComp.new_dir = line.substring(4);
-
-      else if (split[0].equals("delta"))
+      if (split[0].equals("delta"))
       {
         limits[idx] = Double.parseDouble(split[1]);
         if (split.length > 2)
@@ -66,16 +60,16 @@ public class StoredParms
       }
 
       else if (split[0].equals("width"))
-        last_width = Integer.parseInt(split[1]);
+        last_width = (int) Double.parseDouble(split[1]);
 
       else if (split[0].equals("height"))
-        last_height = Integer.parseInt(split[1]);
+        last_height = (int) Double.parseDouble(split[1]);
 
       else if (split[0].equals("x"))
-        last_x = Integer.parseInt(split[1]);
+        last_x = (int) Double.parseDouble(split[1]);
 
       else if (split[0].equals("y"))
-        last_y = Integer.parseInt(split[1]);
+        last_y = (int) Double.parseDouble(split[1]);
     }
 
     fg.close();
@@ -93,12 +87,10 @@ public class StoredParms
 
     Fput fp = new Fput(ini);
 
-    fp.println("old "    + WlComp.old_dir);
-    fp.println("new "    + WlComp.new_dir);
-    fp.println("width "  + (int) WlComp.wlcomp.getSize().getWidth());
-    fp.println("height " + (int) WlComp.wlcomp.getSize().getHeight());
-    fp.println("x "      + (int) WlComp.wlcomp.getLocation().getX());
-    fp.println("y "      + (int) WlComp.wlcomp.getLocation().getY());
+    fp.println("width "  + WlComp.frame.getSize().getWidth());
+    fp.println("height " + WlComp.frame.getSize().getHeight());
+    fp.println("x "      + WlComp.frame.getLocation().getX());
+    fp.println("y "      + WlComp.frame.getLocation().getY());
 
     Delta[] deltas = Delta.getDeltas();
     for (int i = 0; i < deltas.length; i++)

@@ -33,7 +33,7 @@ class HeartBeat extends ThreadControl
   {
     ClassPath.classPath("vdbench jstack")
   };
-  public static Debug_cmds heartbeat_error = new Debug_cmds().storeCommands(dflt_cmd);
+  public static Debug_cmds heartbeat_error = null; // new Debug_cmds().storeCommands(dflt_cmd);
 
   private static boolean   check_slave_heartbeat;
   private static int       DEFAULT      = 3 * 60;
@@ -44,7 +44,7 @@ class HeartBeat extends ThreadControl
     if (common.get_debug(common.LONGER_HEARTBEAT))
       seconds_late = DEFAULT = 15 * 60;
     else if (common.get_debug(common.SHORTER_HEARTBEAT))
-      seconds_late = DEFAULT =      10;
+      seconds_late = DEFAULT =      30;
   }
 
 
@@ -75,7 +75,7 @@ class HeartBeat extends ThreadControl
               heartbeat_error.run_command();
             this.removeIndependent();
             common.memory_usage();
-            common.dumpAllStacks();
+            //common.dumpAllStacks();
             common.failure("Heartbeat monitor: One or more slaves did not respond");
           }
 
@@ -90,7 +90,7 @@ class HeartBeat extends ThreadControl
               heartbeat_error.run_command();
             this.removeIndependent();
             common.memory_usage();
-            common.dumpAllStacks();
+            //common.dumpAllStacks();
             common.failure("Heartbeat monitor: Master did not respond. Timeout value: " + seconds_late);
           }
         }

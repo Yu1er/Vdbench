@@ -51,6 +51,12 @@ public class ReportData
   private NfsV4      total_nfs4;
   private NfsV4      interval_nfs4;
 
+  public  long       last_real_work;
+  public  long       longest_idle;
+
+  public  Date       longest_end;
+
+
   public ReportData(Report owning_report)
   {
     owner = owning_report;
@@ -62,30 +68,30 @@ public class ReportData
    */
   public static void clearAllIntervalStats(long interval_duration)
   {
-    Report[] reps = Report.getReports();
-    for (int i = 0; i < reps.length; i++)
+    for (Report rep : Report.getReports())
     {
+      //common.ptod("rep: " + rep.getFileName());
       if (Vdbmain.isFwdWorkload())
       {
-        reps[i].getData().interval_fwdstats = new FwdStats();
-        reps[i].getData().interval_fwdstats.setElapsed(interval_duration * 1000000);
+        rep.getData().interval_fwdstats = new FwdStats();
+        rep.getData().interval_fwdstats.setElapsed(interval_duration * 1000000);
       }
 
       else
       {
-        reps[i].getData().interval_sdstats = new SdStats();
-        reps[i].getData().interval_sdstats.elapsed = interval_duration * 1000000;
+        rep.getData().interval_sdstats = new SdStats();
+        rep.getData().interval_sdstats.elapsed = interval_duration * 1000000;
       }
 
-      reps[i].getData().interval_cpustats = new Kstat_cpu();
+      rep.getData().interval_cpustats = new Kstat_cpu();
 
-      reps[i].getData().interval_kstats   = new Kstat_data();
-      reps[i].getData().interval_kstats.elapsed = interval_duration * 1000000;
+      rep.getData().interval_kstats   = new Kstat_data();
+      rep.getData().interval_kstats.elapsed = interval_duration * 1000000;
 
       if (NfsStats.areNfsReportsNeeded())
       {
-        reps[i].getData().interval_nfs3 = new NfsV3();
-        reps[i].getData().interval_nfs4 = new NfsV4();
+        rep.getData().interval_nfs3 = new NfsV3();
+        rep.getData().interval_nfs4 = new NfsV4();
       }
     }
   }
@@ -170,6 +176,8 @@ public class ReportData
   public void accumIntervalSdStats(SdStats stats)
   {
     interval_sdstats.stats_accum(stats, false);
+    if (stats.reads + stats.writes > 0)
+      last_real_work = System.currentTimeMillis();
   }
 
   public void accumIntervalCpuStats(Kstat_cpu stats)
@@ -196,19 +204,50 @@ public class ReportData
       interval_nfs4.accum((NfsV4) stats);
   }
 
-  public static void accumMappedIntervalStats(Slave slave, HashMap rs_map)
+  public static void accumMappedFwdStats(HashMap <String, FwdStats> rs_map)
   {
-    String[]   names = (String[])   rs_map.keySet().toArray(new String[0]);
-    FwdStats[] stats = (FwdStats[]) rs_map.values().toArray(new FwdStats[0]);
+    String[]   names = rs_map.keySet().toArray(new String[0]);
+    Arrays.sort(names);
 
     /* First add statistics to run totals: */
-    for (int i = 0; i < names.length; i++)
+    for (String name : names)
     {
-      ReportData rs = Report.getReport(names[i]).getData();
-      rs.interval_fwdstats.accum(stats[i], false);
+      FwdStats   fs = rs_map.get(name);
+      ReportData rd = Report.getReport(name).getData();
+      rd.interval_fwdstats.accum(fs, false);
 
-      rs = Report.getReport(names[i], "histogram").getData();
-      rs.interval_fwdstats.accum(stats[i], false);
+      rd = Report.getReport(name, "histogram").getData();
+      rd.interval_fwdstats.accum(fs, false);
+    }
+  }
+
+  public static void accumMappedFsdStats(Slave slave,
+                                         HashMap <String, FwdStats> rs_map)
+  {
+    String[]   names = rs_map.keySet().toArray(new String[0]);
+    Arrays.sort(names);
+
+    /* First add statistics to run totals: */
+    for (String name : names)
+    {
+      FwdStats   fs = rs_map.get(name);
+      ReportData rd = Report.getReport(name).getData();
+      rd.interval_fwdstats.accum(fs, false);
+
+      rd = Report.getReport(name, "histogram").getData();
+      rd.interval_fwdstats.accum(fs, false);
+
+      rd = slave.getReport(name).getData();
+      rd.interval_fwdstats.accum(fs, false);
+
+      /* See if this slave did any real work: */
+      if (rd.interval_fwdstats.getTotalRate() > 0)
+        rd.last_real_work = System.currentTimeMillis();
+
+      /* When the slave tells us this FSD is done, mark it so that we */
+      /* no longer will look for timeouts.                            */
+      if (fs.work_done)
+        FsdEntry.findFsd(name).work_done = true;
     }
   }
 
@@ -300,7 +339,9 @@ public class ReportData
    */
   public void reportFwdTotal(Kstat_cpu kstat_cpu, String label)
   {
-    total_fwdstats.printLine(owner, kstat_cpu, label);
+    total_fwdstats.printLineL(owner, kstat_cpu, label);
+    total_fwdstats.printStdLine(owner, kstat_cpu, label);
+    total_fwdstats.printMaxLine(owner, kstat_cpu, label);
   }
 
   public static void reportFwdTotals(String[] names, Kstat_cpu kstat_cpu, String label)

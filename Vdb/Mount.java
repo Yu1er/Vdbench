@@ -1,12 +1,12 @@
 package Vdb;
-    
-/*  
- * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved. 
- */ 
-    
-/*  
- * Author: Henk Vandenbergh. 
- */ 
+
+/*
+ * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.
+ */
+
+/*
+ * Author: Henk Vandenbergh.
+ */
 
 import java.io.File;
 import java.io.Serializable;
@@ -20,8 +20,8 @@ import Utils.*;
  */
 public class Mount implements Serializable
 {
-  private final static String c = 
-  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved."; 
+  private final static String c =
+  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.";
 
   private String[] requests;
 
@@ -52,7 +52,7 @@ public class Mount implements Serializable
    * The requested command is passed on 'asis', which means that the 'mount'
    *   command can be a script or something to handle special cases?
    */
-  public void mountIfNeeded()
+  public void initialHostMount()
   {
     mountIfNeeded(null);
   }
@@ -89,7 +89,7 @@ public class Mount implements Serializable
 
       /* Unmount if needed: */
       if (isMountpointActive(special, mountpoint))
-        doUnMount(mountpoint);
+        doUnMount(mountpoint, new_options);
 
       /* Now mount using whatever options have been given: */
       if (new_options == null || new_options.equals("reset"))
@@ -119,7 +119,13 @@ public class Mount implements Serializable
 
   private boolean isMountpointActive(String special, String mountpoint)
   {
-    String[] lines = Fget.readFileToArray("/etc/mnttab");
+    String[] lines = null;
+    if (common.onSolaris())
+      lines = Fget.readFileToArray("/etc/mnttab");
+    else if (common.onLinux())
+      lines = Fget.readFileToArray("/etc/mtab");
+    else
+      return false;
 
     for (int i = 0; i < lines.length; i++)
     {
@@ -149,10 +155,14 @@ public class Mount implements Serializable
    * It should not be needed, but I ran into some cases where the unmount failed
    * because somehow the system thought it was still busy.
    */
-  private void doUnMount(String mountpoint)
+  private void doUnMount(String mountpoint, String new_options)
   {
     OS_cmd ocmd = new OS_cmd();
-    ocmd.addText("umount -f " + mountpoint);
+
+    if (new_options == null)
+      ocmd.addText("umount -f " + mountpoint);
+    else
+      ocmd.addText("umount    " + mountpoint);
 
     ocmd.execute();
 

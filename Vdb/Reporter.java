@@ -35,6 +35,7 @@ public class Reporter extends Thread
   public  static int     first_elapsed_interval = 1;
 
   public  static String  monitor_file  = null;
+  public  static boolean monitor_kill  = false;
   public  static boolean monitor_final = false;
 
 
@@ -127,10 +128,7 @@ public class Reporter extends Thread
           /* If someone else told us to terminate the run, we can simply do it */
           /* now because we just came back from reporting the last interval:   */
           if (Vdbmain.isWorkloadDone())
-          {
-            //common.where();
             break;
-          }
 
           /* Terminate because of DV errors if needed: */
           DV_map.checkDVStatus();
@@ -146,16 +144,18 @@ public class Reporter extends Thread
           if (isWarmupDone())
             elapsed_intervals_done++;
 
-          //common.ptod("elapsed_intervals_done: " + warmup_done + " " +
-          //            elapsed_intervals_done + " " + elapsed_intervals_needed);
+          //common.ptod("elapsed_intervals_done: %3d "+
+          //            "warmup_done: %4b "+
+          //            "elapsed_intervals_needed: %d",
+          //             elapsed_intervals_done,
+          //            isWarmupDone(),
+          //            elapsed_intervals_needed);
+
 
           /* Run is complete if we did the last interval (not for format): */
           boolean last_call = (elapsed_intervals_done >= elapsed_intervals_needed);
           if (Vdbmain.isWorkloadDone())
-          {
-            //common.where();
             last_call = true;
-          }
 
           /* We may want to shut down due to the shutdown file: */
           if (checkMonitorFile())
@@ -177,24 +177,6 @@ public class Reporter extends Thread
           /* GC debugging: report GC usage: */
           GcTracker.report();
 
-          /* Figure out if we're reaching the end of warmup or the end of the run: */
-          if (!isWarmupDone())
-          {
-            if (current_interval > Reporter.getWarmupIntervals())
-            {
-              setWarmupDone();
-              Status.printStatus("Warmup done", rd);
-              first_elapsed_interval = current_interval;
-            }
-
-            else if (Report.getAuxReport() != null && Report.getAuxReport().isWarmupComplete())
-            {
-              setWarmupDone();
-              Status.printStatus("Warmup done", rd);
-              Report.getAuxReport().setWarmupComplete(false);
-              first_elapsed_interval = current_interval;
-            }
-          }
 
           /* If this was the last interval, wait for statistics and break: */
           if (last_call)
@@ -211,7 +193,6 @@ public class Reporter extends Thread
 
             if (Report.getAuxReport() != null)
               Report.getAuxReport().setShutdown(false);
-            //common.where();
             break;
           }
 
@@ -228,21 +209,18 @@ public class Reporter extends Thread
         if (rd.isThisFormatRun() && rd.format.format_limited)
           common.pboth("Format run terminated because of 'format=(only,limited)' request");
 
+
         /* This RD workload is now done: */
         Vdbmain.setWorkloadDone(true);
-        Status.printStatus("Workload done", rd);
+        Status.printRdStatus("Workload done");
         SlaveList.sendWorkloadDone();
+        Timeout.reportLazyBums();
         SlaveList.waitForSlaveWorkCompletion();
-        Status.printStatus("Slaves done", rd);
+        Status.printRdStatus("Slaves done");
         Blocked.printAndResetCounters();
 
         if (ThreadMonitor.active())
           Host.reportMonTotals();
-
-        /* Report SD vs WG i/o counts: */
-        //if (Vdbmain.isWdWorkload()) // && rd.wgs_for_rd.size() > 0)
-        //  HandleSkew.endOfRunSkewCheck(rd);
-        //WG_entry.report_wd_iocount(rd);
 
         last_pause = rd.pause;
 
@@ -269,6 +247,16 @@ public class Reporter extends Thread
       Debug_cmds.ending_command.run_command();
       SwatCharts.createCharts();
 
+
+      /* When we come here ALL RDs have been completed */
+      // if (shutdown_hook_called)
+      // {
+      //   if (!Vdbmain.simulate)
+      //     SlaveList.shutdownAllSlaves();
+      //   ThreadControl.shutdownAll("Vdb.HeartBeat");
+      //   SlaveList.waitForAllSlavesShutdown();
+      //   Report.closeAllReports();
+      // }
 
       common.plog("Ending Reporter");
 
@@ -402,8 +390,8 @@ public class Reporter extends Thread
 
     else // if (Report.sdDetailNeeded())
     {
-      Vdbmain.observed_iorate = Math.round(fwd_totals.getTotalRate());
-      Vdbmain.observed_resp   = fwd_totals.getTotalResp();
+      Vdbmain.observed_iorate = Math.round(fwd_totals.getReqstdRate());
+      Vdbmain.observed_resp   = fwd_totals.getReqstdlResp();
       if (RD_entry.next_rd.doing_curve_max)
         Vdbmain.last_curve_max = Vdbmain.observed_iorate;
     }
@@ -442,7 +430,7 @@ public class Reporter extends Thread
       warmup_done = true;
   }
 
-  private static int getWarmupIntervals()
+  public static int getWarmupIntervals()
   {
     return warmup_intervals;
   }
@@ -450,9 +438,11 @@ public class Reporter extends Thread
   {
     return warmup_done;
   }
-  private static void setWarmupDone()
+  public static void setWarmupDone(int last_warmup_intv)
   {
     warmup_done = true;
+    Status.printRdStatus("Warmup done");
+    first_elapsed_interval = last_warmup_intv + 1;
   }
 
 
@@ -496,10 +486,28 @@ public class Reporter extends Thread
   {
     if (Fget.file_exists(tmp_shutdown))
     {
-      common.pboth("User requested early Vdbench termination using file '%s'.", tmp_shutdown);
-      Status.printStatus("User requested early Vdbench termination.", null);
+
+      for (String line : Fget.readFileToArray(tmp_shutdown))
+      {
+        if (line.equals("kill_vdbench"))
+          monitor_kill  = true;
+      }
+
       clearShutdownFile(false);
       monitor_final = true;
+
+      if (!monitor_kill)
+      {
+        common.pboth("User requested early Vdbench termination using file '%s'.", tmp_shutdown);
+        Status.printStatus("User requested early Vdbench termination.");
+      }
+      else
+      {
+        common.pboth("User requested 'kill' for Vdbench.");
+        common.pboth("Attempting clean shutdown.");
+        Status.printStatus("User requested 'kill' for Vdbench.");
+      }
+
       return true;
     }
 
@@ -515,7 +523,7 @@ public class Reporter extends Thread
     if (line.equals("shutdown") || line.equals("end_rd"))
     {
       common.pboth("User requested early shutdown of this run.");
-      Status.printStatus("User requested early shutdown of this run.", null);
+      Status.printStatus("User requested early shutdown of this run.");
       clearShutdownFile(false);
       return true;
     }
@@ -523,13 +531,36 @@ public class Reporter extends Thread
     else if (line.equals("terminate") || line.equals("end_vdbench"))
     {
       common.pboth("User requested early Vdbench termination.");
-      Status.printStatus("User requested early Vdbench termination.", null);
+      Status.printStatus("User requested early Vdbench termination.");
       clearShutdownFile(false);
       monitor_final = true;
       return true;
     }
 
+    else if (line.equals("kill_vdbench"))
+    {
+      common.pboth("User 'kill requested.");
+      Status.printStatus("User 'kill' requested.");
+      clearShutdownFile(false);
+      monitor_final = true;
+      monitor_kill  = true;
+      return true;
+    }
+
     return false;
+  }
+
+  /**
+   * User killed Vdbench.
+   * Use the already available 'kill via temp file' logic to get this done as
+   * cleanly as possible.
+   */
+  public static void killVdbench()
+  {
+    Fput fp = new Fput(tmp_shutdown);
+    fp.println("kill_vdbench");
+    fp.close();
+    Vdbmain.setWorkloadDone(true);
   }
 }
 

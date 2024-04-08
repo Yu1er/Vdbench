@@ -1,17 +1,20 @@
 package Vdb;
-    
-/*  
- * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved. 
- */ 
-    
-/*  
- * Author: Henk Vandenbergh. 
- */ 
+
+/*
+ * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.
+ */
+
+/*
+ * Author: Henk Vandenbergh.
+ */
 
 class OpRmdir extends FwgThread
 {
-  private final static String c = 
-  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved."; 
+  private final static String c =
+  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.";
+
+
+  private boolean rmdir_max = (SlaveWorker.work.fwd_rate == RD_entry.MAX_RATE);
 
   public OpRmdir(Task_num tn, FwgEntry fwg)
   {
@@ -32,7 +35,11 @@ class OpRmdir extends FwgThread
       if (SlaveJvm.isWorkloadDone())
         return false;
 
-      dir = fwg.anchor.getDir(fwg.select_random, format);
+      // rmdir will NEVER be done during a format!!!!!! -:)
+      dir = fwg.anchor.getDir(fwg.select_random, format || rmdir_max);
+
+      if (dir == null)
+        return false;
 
       if (!dir.setBusy(true))
       {
@@ -52,6 +59,10 @@ class OpRmdir extends FwgThread
         block(Blocked.DIR_DOES_NOT_EXIST, dir.getFullName());
         continue;
       }
+
+      /* No locking required, since this (the parent) is still busy: */
+      if (rmdir_max)
+        deleteChildren(dir.getChildren());
 
       if (dir.anyExistingChildren())
       {
@@ -81,9 +92,13 @@ class OpRmdir extends FwgThread
         continue;
       }
 
-
       break;
     }
+
+
+    //  /* No locking required, since this (the parent) is still busy: */
+    //  if (format || rmdir_max)
+    //    deleteChildren(dir.getChildren());
 
     /* Now do the work: */
     dir.deleteDir(fwg);
@@ -91,6 +106,42 @@ class OpRmdir extends FwgThread
 
     return true;
   }
+
+
+  private void deleteChildren(Directory[] children)
+  {
+    if (children == null)
+      return;
+
+    for (Directory dir : children)
+    {
+
+      /* Lock this new child. The loop is in case an other thread is trying      */
+      /* to delete this directory also, but he'll fail since the parent is busy: */
+      while (!dir.setBusy(true));
+
+      if (!dir.exist())
+      {
+        dir.setBusy(false);
+        continue;
+      }
+
+      deleteChildren(dir.getChildren());
+
+      if (dir.countFiles(0, null) != 0)
+      {
+        block(Blocked.DIR_STILL_HAS_FILES, dir.getFullName());
+        dir.setBusy(false);
+        continue;
+      }
+
+      dir.deleteDir(fwg);
+
+      /* Free up this child now: */
+      dir.setBusy(false);
+    }
+  }
+
 
   private String[] msg =
   {

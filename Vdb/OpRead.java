@@ -20,6 +20,7 @@ class OpRead extends FwgThread
   "Copyright (c) 2000, 2016, Oracle and/or its affiliates. All rights reserved.";
 
   private boolean this_is_OpReadWrite = false;
+  private boolean debug_timeout = common.get_debug(common.OPREAD_SLEEP);
 
   public OpRead(Task_num tn, FwgEntry fwg)
   {
@@ -33,6 +34,12 @@ class OpRead extends FwgThread
 
   protected boolean doOperation()
   {
+    if (debug_timeout)
+    {
+      common.ptod("Sleeping for a bit, debugging");
+      common.sleep_some(5*1000);
+    }
+
     /* First get a file to fiddle with: */
     if (afe == null)
     {
@@ -76,7 +83,24 @@ class OpRead extends FwgThread
 
       /* Get the first transfer size: */
       afe.xfersize = fwg.getXferSize();
-      afe.setNextSequentialRead();
+
+      //He is returning false here!!
+      boolean rc = afe.setNextSequentialRead();
+      if (!rc)
+      {
+        fe = afe.getFileEntry();
+        common.ptod(fe);
+        common.failure("Unexpected return code: " + fe.getCurrentSize() + " " +
+                       fe.getReqSize() + " " + fe.getLastLba() + " " + afe.next_lba + " " + fe + " xf: " + afe.xfersize);
+      }
+
+    }
+
+    if (afe.xfersize == 0)
+    {
+      common.ptod("fwg: " + fwg.getName());
+      common.ptod("afe: " + afe.getFileEntry());
+      common.failure("Unexpected xfersize=0");
     }
 
     afe.readBlock();

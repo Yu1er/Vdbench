@@ -127,7 +127,7 @@ public class CreateSdFile
     int xfersize = 128*1024;
     if (min_size < 128*1024)
     {
-      common.ptod("The creation of a very small file causes xfersize=512 to be set");
+      common.ptod("The creation of a very small file causes xfersize=512 to be set for the format");
       xfersize = 512;
     }
 
@@ -179,6 +179,10 @@ public class CreateSdFile
       wd.host_names    = new String[] { "*" };
       wd.xf_table      = new double[] { xfersize};
       wg.sd_used.trackSdXfersizes(wd.xf_table);
+
+      // that was already above, why was that removed?
+      // Put it back in during FS testing
+      wd.host_names = new String[] { wg.getSlave().getHost().getLabel() };
 
       rd.wd_names[i]   = wd.wd_name;
 

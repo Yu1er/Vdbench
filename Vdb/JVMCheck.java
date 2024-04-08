@@ -1,20 +1,20 @@
 package Vdb;
-    
-/*  
- * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved. 
- */ 
-    
-/*  
- * Author: Henk Vandenbergh. 
- */ 
+
+/*
+ * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.
+ */
+
+/*
+ * Author: Henk Vandenbergh.
+ */
 
 import java.util.*;
 
 
 public class JVMCheck
 {
-  private final static String c = 
-  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved."; 
+  private final static String c =
+  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.";
 
   // Determines the users current JRE version, and splits the resulting string into
   // numerical tokens.  These tokens are then evaluated to be sure that the JRE
@@ -47,7 +47,8 @@ public class JVMCheck
     {
       for (int i = 0; i < 3 && tokenizer.hasMoreTokens(); i++)
       {
-        versionElements[i] = Integer.parseInt(tokenizer.nextToken().substring(0, 1));
+        String token = tokenizer.nextToken();
+        versionElements[i] = Integer.parseInt(token); //.substring(0, 1));
         //System.out.println("versionElements[" + i + "]: " + versionElements[i]);
       }
     }
@@ -140,14 +141,14 @@ public class JVMCheck
   {
     System.out.println(System.getProperty("java.version"));
 
-    test("1.3.0",    1,4,2, false);
-    test("1.4.0",    1,4,2, false);
-    test("1.4.1",    1,4,2, false);
-    test("1.4.1_02", 1,4,2, false);
-    test("1.4.2",    1,4,2, true);
-    test("1.4.3",    1,4,2, true);
-    test("1.5.0",    1,4,2, true);
-    test("2.5.0",    1,4,2, true);
+    //test("1.3.0",    1,4,2, false);
+    //test("1.4.0",    1,4,2, false);
+    //test("1.4.1",    1,4,2, false);
+    //test("1.4.1_02", 1,4,2, false);
+    //test("1.4.2",    1,4,2, true);
+    //test("1.4.3",    1,4,2, true);
+    //test("1.5.0",    1,4,2, true);
+    test("1.10.0",    1,4,2, true);
 
   }
 

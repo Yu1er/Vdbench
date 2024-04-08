@@ -8,6 +8,8 @@ package Vdb;
  * Author: Henk Vandenbergh.
  */
 
+import java.io.File;
+import java.util.ArrayList;
 import java.util.Vector;
 
 import Utils.Format;
@@ -28,6 +30,8 @@ class OpFormat extends FwgThread
 
   private int    format_thread_number;
 
+  private ArrayList <File> dirs_to_clean = null;
+
 
   public OpFormat(Task_num tn, FwgEntry fwg)
   {
@@ -42,6 +46,14 @@ class OpFormat extends FwgThread
     create = new OpCreate (null, fwg);
   }
 
+
+  public void storeCleanDir(File dirptr)
+  {
+    if (dirs_to_clean == null)
+      dirs_to_clean = new ArrayList(8);
+    dirs_to_clean.add(dirptr);
+    //common.ptod("storeCleanDir: %2d %s", format_thread_number, dirptr.getAbsolutePath());
+  }
 
   public void setFormatThreadNumber(int no)
   {
@@ -100,6 +112,7 @@ class OpFormat extends FwgThread
       if (!create.doOperation() || !fwg.anchor.anyFilesToFormat())
       {
         waitForAllOtherThreads(fwg, fwg.anchor.create_threads_running, "create");
+        fwg.work_done = true;
 
         return false;
       }
@@ -133,7 +146,7 @@ class OpFormat extends FwgThread
         /* Prevent multiple threads reporting the same threshold: */
         if (fwg.anchor.last_format_pct <= one_pct)
         {
-          SlaveJvm.sendMessageToConsole("anchor=%s: %s %d of %d files (%.2f%%)",
+          SlaveJvm.sendMessageToConsole("anchor=%s: %s %,d of %,d files (%.2f%%)",
                                         fwg.anchor.getAnchorName(),
                                         task, count, total, pct);
           fwg.anchor.last_format_pct = one_pct;
@@ -204,7 +217,171 @@ class OpFormat extends FwgThread
     }
     //common.plog("exit: '" + txt + "' complete for anchor=" + fwg.anchor.getAnchorName());
   }
+
+
+  /**
+   * 'format' cleanup: start deleting directories and files existing under the
+   * first level of directories.
+   * Doing it this way allows multi-threaded delete.
+   *
+   * Of course, if we use width=1 then there will NOT be multi-threading!
+   */
+  public void deletePendingLevel1Directories()
+  {
+    if (dirs_to_clean == null || dirs_to_clean.size() == 0)
+      return;
+
+    for (File dirptr : dirs_to_clean)
+    {
+      /* This check is here in case a monitor file tells us to shut down: */
+      if (SlaveJvm.isWorkloadDone())
+        return;
+
+      long start = System.currentTimeMillis();
+      deleteOldStuff(dirptr, fwg);
+
+      long seconds = (System.currentTimeMillis() - start) / 1000;
+      if (seconds > 30)
+        common.ptod("deletePendingLevel1Directories: it took %4d seconds to clean up %s ",
+                    seconds, dirptr.getName());
+
+    }
+  }
+
+
+  /**
+   * Recursively list the anchor directory.
+   * As soon as you find a file, delete it. Directories are stored in a Vector
+   * so that they can be deleted later.
+   */
+  private void deleteOldStuff(File dirptr, FwgEntry fwg)
+  {
+    String dirname    = dirptr.getAbsolutePath();
+    FileAnchor anchor = fwg.anchor;
+
+    /* Start the recusrive directory search: */
+    Signal signal     = new Signal(30);
+
+    /* Go delete files and directories: */
+    readDirsAndDelete(fwg, dirptr, signal);
+
+
+    /* Finally, clean up the control file: */
+    // File fptr = new File(getAnchorName(), ControlFile.CONTROL_FILE);
+    // if (fptr.exists())
+    // {
+    //   if (!fptr.delete())
+    //     common.failure("Unable to delete control file: " + fptr.getAbsolutePath());
+    // }
+    //
+    // existing_dirs = 0;
+  }
+
+
+  /**
+   * Get a directory listing and while doing that, delete all files, followed
+   * by the delete of the directory.
+   */
+  private void readDirsAndDelete(FwgEntry fwg,
+                                 File     dirptr_in,
+                                 Signal   signal)
+  {
+    FileAnchor anchor = fwg.anchor;
+
+    /* Go through a list of all files and directories of this parent: */
+    File[] dirptrs = dirptr_in.listFiles();
+
+    /* This is likely caused by the use of 'shared=yes' with an other slave */
+    /* deleting this directory.                                             */
+    if (dirptrs == null)
+    {
+      common.ptod("readDirsAndDelete(): directory not found and ignored: " + dirptr_in.getAbsolutePath());
+      return;
+    }
+
+    for (File dirptr : dirptrs)
+    {
+      /* This check is here in case a monitor file tells us to shut down: */
+      if (SlaveJvm.isWorkloadDone())
+        return;
+
+      String name = dirptr.getName();
+      //common.ptod("readDirsAndDelete: " + dirptr.getAbsolutePath());
+
+      if (name.endsWith(InfoFromHost.NO_DISMOUNT_FILE))
+        continue;
+
+
+      /* Only return our own directory and file names. If any other files */
+      /* are left in a directory the directory delete will fail anyway if */
+      /* other files are left.                                            */
+      if (!name.startsWith("vdb"))
+        continue;
+
+      /* Leave the control file around a little bit, but remove debug */
+      /* backup copies:                                               */
+      if (name.endsWith(ControlFile.CONTROL_FILE))
+        continue;
+      if (name.indexOf(ControlFile.CONTROL_FILE) == -1)
+      {
+        if (!name.endsWith(".dir") &&
+            (!name.endsWith(".file") && !name.endsWith(".file.gz")))
+          continue;
+      }
+
+      /* If this is a file, delete it: */
+      if (name.endsWith("file"))
+      {
+        long begin_delete = Native.get_simple_tod();
+        if (!dirptr.delete())
+        {
+          if (!fwg.shared)
+            common.failure("Unable to delete file: " + dirptr.getAbsolutePath());
+          else
+            fwg.blocked.count(Blocked.FILE_DELETE_SHARED);
+        }
+        else
+        {
+          //common.ptod("deleted1: " + dirptr.getAbsolutePath());
+          FwdStats.count(Operations.DELETE, begin_delete);
+          fwg.blocked.count(Blocked.FILE_DELETES);
+          anchor.countFileDeletes();
+        }
+        continue;
+      }
+
+
+      /* Directories get a recursive call before they are deleted: */
+      readDirsAndDelete(fwg, dirptr, signal);
+    }
+
+    /* Once back here the directory should be empty and can be deleted: */
+    long begin_delete = Native.get_simple_tod();
+    if (!dirptr_in.delete())
+    {
+      if (!fwg.shared)
+      {
+        common.ptod("");
+        common.ptod("Unable to delete directory: " + dirptr_in.getAbsolutePath());
+        common.ptod("Are there any files left that were not created by Vdbench?");
+        common.failure("Unable to delete directory: " + dirptr_in.getAbsolutePath() +
+                       ". \n\t\tAre there any files left that were not created by Vdbench?");
+      }
+      else
+      {
+        anchor.countDirDeletes();
+        fwg.blocked.count(Blocked.DIR_DELETE_SHARED);
+      }
+    }
+    else
+    {
+      //common.ptod("deletedd: " + dirptr_in.getAbsolutePath());
+      FwdStats.count(Operations.RMDIR, begin_delete);
+      fwg.blocked.count(Blocked.DIRECTORY_DELETES);
+    }
+  }
 }
+
 
 
 class FormatCounter

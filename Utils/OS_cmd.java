@@ -99,6 +99,10 @@ public class OS_cmd
   /**
    * Add a string to the current command line.
    */
+  public void add(String format, Object ... args)
+  {
+    addText(String.format(format, args));
+  }
   public void addText(long cmd)
   {
     addText("" + cmd);
@@ -174,12 +178,12 @@ public class OS_cmd
   public void printStdout()
   {
     for (int i = 0; i < stdout.size(); i++)
-      common.ptod("stdout: " + stdout.elementAt(i));
+      Vdb.common.ptod("stdout: " + stdout.elementAt(i));
   }
   public void printStderr()
   {
     for (int i = 0; i < stderr.size(); i++)
-      common.ptod("stderr: " + stderr.elementAt(i));
+      Vdb.common.ptod("stderr: " + stderr.elementAt(i));
   }
 
   public void setCmd(String cmd)
@@ -193,6 +197,27 @@ public class OS_cmd
   public boolean getRC()
   {
     return rc;
+  }
+  public String getHttpCode()
+  {
+    /* Am I sure it is not always line #1? */
+    for (String line : getStdout())
+    {
+      if (line.startsWith("HTTP/1.1 "))
+        return line.substring(9);
+    }
+    return null;
+  }
+
+  public boolean isHttpOk()
+  {
+    /* Am I sure it is not always line #1? */
+    for (String line : getStdout())
+    {
+      if (line.startsWith("HTTP/1.1") && line.endsWith(" OK"))
+        return true;
+    }
+    return false;
   }
 
 
@@ -570,6 +595,11 @@ public class OS_cmd
   }
 
 
+
+  public boolean stillRunning()
+  {
+    return output_stream.isAlive();
+  }
 
   public static void main(String[] args)
   {

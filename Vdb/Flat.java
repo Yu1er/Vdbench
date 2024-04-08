@@ -10,6 +10,7 @@ package Vdb;
 
 import java.io.PrintWriter;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.Vector;
 
@@ -160,7 +161,7 @@ public class Flat
     for (int i = 0; i < flat_list.size(); i++)
     {
       Flat flt = (Flat) flat_list.elementAt(i);
-      line = line + Format.f("%10s ", flt.label);
+      line = line + Format.f("%s ", flt.label);
     }
 
     flatfile_html.println(line);
@@ -196,13 +197,13 @@ public class Flat
     {
       Flat flt = (Flat) flat_list.elementAt(i);
       if (flt.type == 1)
-        line = line + Format.f("%10d ", flt.longval);
+        line = line + Format.f("%d ", flt.longval);
       else if (flt.type == 2)
-        line = line + Format.f("%10.4f ", flt.dblval);
+        line = line + removeTrail(flt.dblval) + " ";
       else if (flt.type == 3)
-        line = line + Format.f("%10s ", flt.strval);
+        line = line + Format.f("%s ", flt.strval);
       else
-        line = line + Format.f("%10s ", "n/a");
+        line = line + Format.f("%s ", "n/a");
     }
 
     Date now = new Date();
@@ -217,12 +218,38 @@ public class Flat
   }
 
   /**
+   * When printing with 4 decimals, when they are all zeros they are just
+   * wasting space. Remove them.
+   */
+  private static String removeTrail(double value)
+  {
+    /* The '6' here assures we get at least one number before the decimal */
+    String out = Format.f("%6.4f", value);
+
+    //common.ptod("out1: " + out);
+    while (out.endsWith("0"))
+    {
+      out = out.substring(0, out.length() - 1);
+    }
+    while (out.endsWith("."))
+    {
+      out = out.substring(0, out.length() - 1);
+    }
+    //common.ptod("out2: " + out);
+
+    return out;
+  }
+
+  /**
    * Standard columns
    */
   public static void define_column_headers()
   {
     if (Vdbmain.isWdWorkload())
     {
+      // Don't include these two lines. That then adds two columns also.
+      //add_col("tod",         "Timestamp, hh:mm:ss.SSS");
+      //add_col("timestamp",   "Timestamp, mm/dd/yyy-hh:mm:ss.SSS");
       add_col("Run",         "Name of run from RD=");
       add_col("Interval",    "Reporting interval number");
       add_col("reqrate",     "Requested i/o rate");
@@ -234,7 +261,11 @@ public class Flat
       add_col("read_resp",   "Observed read response time");
       add_col("write_resp",  "Observed write response time");
       add_col("resp_max",    "Observed maximum response time");
-      add_col("resp_std",    "Standard deviation");
+      add_col("read_max",    "Observed maximum read response time");
+      add_col("write_max",   "Observed maximum write response time");
+      add_col("resp_std",    "Standard deviation response time");
+      add_col("read_std",    "Standard deviation reads");
+      add_col("write_std",   "Standard deviation writes");
       add_col("xfersize",    "data transfer size requested");
       add_col("threads",     "number of threads requested");
       add_col("rdpct",       "read% requested");
@@ -250,43 +281,109 @@ public class Flat
 
     else
     {
-      add_col("Run",          "Name of run from RD=");
-      add_col("Interval",     "Reporting interval number");
-      add_col("reqrate",      "Requested FWD rate");
-      add_col("rate",         "Requested operations per second");
-      add_col("resp",         "Requested operations response time");
-      add_col("MB/sec",       "Megabytes per second (MB=1024*1024)");
-      add_col("Read_rate",    "Reads per second");
-      add_col("Read_resp",    "Read response time");
-      add_col("Write_rate",   "Writes per second");
-      add_col("Write_resp",   "Write response time");
-      add_col("MB_read",      "Megabytes read per second");
-      add_col("MB_write",     "Megabytes written per second");
-      add_col("Xfersize",     "Average transfer size");
-      add_col("Mkdir_rate",   "Mkdirs per second");
-      add_col("Mkdir_resp",   "Mkdir response time");
-      add_col("Rmdir_rate",   "Rmdirs per second");
-      add_col("Rmdir_resp",   "Rmdir response time");
-      add_col("Create_rate",  "Creates per second");
-      add_col("Create_resp",  "Create response time");
-      add_col("Open_rate",    "Opens per second");
-      add_col("Open_resp",    "Open response time");
-      add_col("Close_rate",   "Closes per second");
-      add_col("Close_resp",   "Close response time");
-      add_col("Delete_rate",  "Deletes per second");
-      add_col("Delete_resp",  "Delete response time");
-      add_col("Getattr_rate", "Getattrs per second");
-      add_col("Getattr_resp", "Getattr response time");
-      add_col("Setattr_rate", "Setattrs per second");
-      add_col("Setattr_resp", "Setattr response time");
-      add_col("Access_rate",  "Access per second");
-      add_col("Access_resp",  "Access response time");
-      add_col("Copy_rate",    "Copies per second");
-      add_col("Copy_resp",    "Copy response time");
-      add_col("Move_rate",    "Moves per second");
-      add_col("Move_resp",    "Move response time");
-      add_col("compratio",   "Requested compression ratio");
-      add_col("dedupratio",  "Requested dedup ratio");
+      add_col("Run",               "Name of run from RD=");
+      add_col("Interval",          "Reporting interval number");
+      add_col("Xfersize",          "data transfer size requested");
+      add_col("Threads",           "number of threads requested");
+      add_col("Reqrate",           "Requested FWD rate");
+
+      add_col("Rate",              "Requested operations per second");
+      add_col("Rate_std",          "Requested operations per second standard deviation");
+      add_col("Rate_max",          "Requested operations per second max");
+
+      add_col("Resp",              "Requested response time");
+      add_col("Resp_std",          "Requested response time standard deviation");
+      add_col("Resp_max",          "Requested response time max");
+
+      add_col("MB/sec",            "Megabytes per second (MB=1024*1024)");
+      add_col("MB_read",           "Megabytes read per second");
+      add_col("MB_write",          "Megabytes written per second");
+      //add_col("Xfersize",          "Average transfer size");
+
+      add_col("Read_rate",         "Reads per second");
+      add_col("Read_rate_std",     "Reads per second stddev");
+      add_col("Read_rate_max",     "Reads per second max");
+      add_col("Read_resp",         "Read response time");
+      add_col("Read_resp_std",     "Read response time stddev");
+      add_col("Read_resp_max",     "Read response time max");
+
+      add_col("Write_rate",        "Writes per second");
+      add_col("Write_rate_std",    "Writes per second stddev");
+      add_col("Write_rate_max",    "Writes per second max");
+      add_col("Write_resp",        "Write response time");
+      add_col("Write_resp_std",    "Write response time stddev");
+      add_col("Write_resp_max",    "Write response time max");
+
+      add_col("Mkdir_rate",        "Mkdirs per second");
+      add_col("Mkdir_rate_std",    "Mkdirs per second stddev");
+      add_col("Mkdir_rate_max",    "Mkdirs per second max");
+      add_col("Mkdir_resp",        "Mkdir response time");
+      add_col("Mkdir_resp_std",    "Mkdir response time stddev");
+      add_col("Mkdir_resp_max",    "Mkdir response time max");
+
+      add_col("Rmdir_rate",        "Rmdirs per second");
+      add_col("Rmdir_rate_std",    "Rmdirs per second stddev");
+      add_col("Rmdir_rate_max",    "Rmdirs per second max");
+      add_col("Rmdir_resp",        "Rmdir response time");
+      add_col("Rmdir_resp_std",    "Rmdir response time stddev");
+      add_col("Rmdir_resp_max",    "Rmdir response time max");
+
+      add_col("Create_rate",       "Creates per second");
+      add_col("Create_rate_std",   "Creates per second stddev");
+      add_col("Create_rate_max",   "Creates per second max");
+      add_col("Create_resp",       "Create response time");
+      add_col("Create_resp_std",   "Create response time stddev");
+      add_col("Create_resp_max",   "Create response time max");
+
+      add_col("Open_rate",         "Opens per second");
+      add_col("Open_rate_std",     "Opens per second stddev");
+      add_col("Open_rate_max",     "Opens per second max");
+      add_col("Open_resp",         "Open response time");
+      add_col("Open_resp_std",     "Open response time stddev");
+      add_col("Open_resp_max",     "Open response time max");
+
+      add_col("Close_rate",        "Closes per second");
+      add_col("Close_rate_std",    "Closes per second stddev");
+      add_col("Close_rate_max",    "Closes per second max");
+      add_col("Close_resp",        "Close response time");
+      add_col("Close_resp_std",    "Close response time stddev");
+      add_col("Close_resp_max",    "Close response time max");
+
+      add_col("Delete_rate",       "Deletes per second");
+      add_col("Delete_rate_std",   "Deletes per second stddev");
+      add_col("Delete_rate_max",   "Deletes per second max");
+      add_col("Delete_resp",       "Delete response time");
+      add_col("Delete_resp_std",   "Delete response time stddev");
+      add_col("Delete_resp_max",   "Delete response time max");
+
+      add_col("Getattr_rate",      "Getattrs per second");
+      add_col("Getattr_rate_std",  "Getattrs per second stddev");
+      add_col("Getattr_rate_max",  "Getattrs per second max");
+      add_col("Getattr_resp",      "Getattr response time");
+      add_col("Getattr_resp_std",  "Getattr response time stddev");
+      add_col("Getattr_resp_max",  "Getattr response time max");
+
+      add_col("Setattr_rate",      "Setattrs per second");
+      add_col("Setattr_rate_std",  "Setattrs per second stddev");
+      add_col("Setattr_rate_max",  "Setattrs per second max");
+      add_col("Setattr_resp",      "Setattr response time");
+      add_col("Setattr_resp_std",  "Setattr response time stddev");
+      add_col("Setattr_resp_max",  "Setattr response time max");
+
+      add_col("Access_rate",       "Accesses per second");
+      add_col("Access_rate_std",   "Accesses per second stddev");
+      add_col("Access_rate_max",   "Accesses per second max");
+      add_col("Access_resp",       "Access response time");
+      add_col("Access_resp_std",   "Access response time stddev");
+      add_col("Access_resp_max",   "Access response time max");
+
+      //add_col("Copy_rate",         "Copies per second");
+      //add_col("Copy_resp",         "Copy response time");
+      //add_col("Move_rate",         "Moves per second");
+      //add_col("Move_resp",         "Move response time");
+
+      add_col("Compratio",         "Requested compression ratio");
+      add_col("Dedupratio",        "Requested dedup ratio");
     }
   }
 
@@ -317,11 +414,95 @@ public class Flat
     add_col("cpu_idle",    "kstat: cpu% idle" );
   }
 
-  public static void main(String args[])
-  {
-    String sd = null;
 
-    common.ptod(Format.f("xxx %s", sd));
+
+  /**
+   * Report on the flatfile those parameters that are identical in each workload
+   */
+  public static void reportWgParameters(RD_entry rd)
+  {
+    ArrayList <WG_entry> wg_list = rd.getAllWorkloads();
+    WG_entry wg     = wg_list.get(0);
+    int    xfersize = (wg.getXfersizes().length > 0) ? (int) wg.getXfersizes()[0] : 0;
+    double rhpct    = wg.rhpct;
+    double whpct    = wg.whpct;
+    double readpct  = wg.readpct;
+    double seekpct  = wg.seekpct;
+
+    for (int i = 1; i < wg_list.size(); i++)
+    {
+      wg = wg_list.get(i);
+      if (wg.getXfersizes().length > 0 && xfersize != wg.getXfersizes()[0])
+        xfersize = -1;
+      if (rhpct != wg.rhpct)
+        rhpct = -1;
+      if (whpct != wg.whpct)
+        whpct = -1;
+      if (readpct != wg.readpct)
+        readpct = -1;
+      if (seekpct != wg.seekpct)
+        seekpct = -1;
+    }
+
+    /* Clear columns in case I have no info: */
+    Flat.put_col("xfersize");
+    Flat.put_col("rhpct");
+    Flat.put_col("whpct");
+    Flat.put_col("rdpct");
+    Flat.put_col("threads");
+    Flat.put_col("seekpct");
+
+    /* Fill in the blanks, if we have any info: */
+    if (xfersize != -1)
+      Flat.put_col("xfersize", xfersize);
+    if (rhpct != -1)
+      Flat.put_col("rhpct", rhpct);
+    if (whpct != -1)
+      Flat.put_col("whpct", whpct);
+    if (readpct != -1)
+      Flat.put_col("rdpct", readpct);
+    if (seekpct != -1)
+      Flat.put_col("seekpct", seekpct);
+
+    /* Keep track of #threads in SD parameter. If they're all the same, report */
+    /* that count, otherwise report -1: */
+    long threads_in_sds = 0;
+
+    long lunsize = 0;
+    for (int i = 0; i < Vdbmain.sd_list.size(); i++)
+    {
+      SD_entry sd = (SD_entry) Vdbmain.sd_list.elementAt(i);
+      if (sd.isActive())
+      {
+        if (threads_in_sds == 0)
+          threads_in_sds = sd.threads;
+        if (threads_in_sds != sd.threads)
+          threads_in_sds = -1;
+
+        lunsize += sd.end_lba;
+      }
+    }
+
+    if (rd.current_override.getThreads() != For_loop.NOVALUE)
+      Flat.put_col("threads", rd.current_override.getThreads());
+    else
+      Flat.put_col("threads", threads_in_sds);
+    Flat.put_col("lunsize", (double) lunsize / Report.GB);
+  }
+
+
+
+  public static void reportFwgParameters(RD_entry rd)
+  {
+    /* Clear columns in case I have no info: */
+    Flat.put_col("xfersize");
+    Flat.put_col("threads");
+
+    if (rd.current_override.getThreads() != For_loop.NOVALUE)
+      Flat.put_col("Threads", rd.current_override.getThreads());
+
+    if (rd.current_override.getXfersize() != For_loop.NOVALUE)
+      Flat.put_col("Xfersize", rd.current_override.getXfersize());
   }
 }
 

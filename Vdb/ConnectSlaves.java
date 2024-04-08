@@ -52,7 +52,9 @@ public class ConnectSlaves
 
         /* Increment port#: */
         SlaveSocket.setMasterPort(SlaveSocket.getMasterPort() + 1);
-        SlaveSocket.setRemotePort(SlaveSocket.getRemotePort() + 1);
+
+        /* Remote port may NOT be incremented! */
+        //SlaveSocket.setRemotePort(SlaveSocket.getRemotePort() + 1);
 
         common.ptod("Trying again on port " + SlaveSocket.getMasterPort());
       }
@@ -84,7 +86,7 @@ public class ConnectSlaves
           common.failure(e);
         }
 
-        Status.printStatus("Slaves connected", null);
+        Status.printStatus("Slaves connected");
         break;
       }
 

@@ -102,7 +102,7 @@ public class InsertHosts
       //common.ptod("linexx: " + line);
 
       /* Copy until we find the start of a parameter: */
-      if (!isStart(line) || line.startsWith("rd="))
+      if (!isStart(line)) //  || line.startsWith("rd="))
       {
         addLine(line);
         continue;
@@ -230,6 +230,12 @@ public class InsertHosts
   {
     String line = input;
 
+    if (input.trim().startsWith("/")   ||
+        input.trim().startsWith("#")   ||
+        input.trim().startsWith("*")   ||
+        input.trim().length() == 0)
+      return input;
+
     for (String key : substitute_map.keySet())
     {
       String value = substitute_map.get(key);
@@ -300,6 +306,9 @@ public class InsertHosts
       {
         if (line.contains("=$") || line.contains("=!"))
           common.failure("Unknown variable substitution request in parameter file: " + line);
+
+        // Note: data_errors="xxx output=$output" will fail because of this.
+        // Just do it a different way and we can keep the variable check in tact!
       }
     }
 

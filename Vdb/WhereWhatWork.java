@@ -69,9 +69,9 @@ public class WhereWhatWork
           box.add("If ANY work is selected for a host the first slave " +
                   "on that host MUST have work.");
           box.add("rd=%s", rd.rd_name);
-          box.add("This is a Vdbench bug, please report it.");
+          //box.add("This is a Vdbench bug, please report it.");
           box.add("");
-          box.add("Workaround: use only a single slave, see 'jvms=' in the doc.");
+          box.add("Workaround: adjust thread or JVM count, see 'jvms=' in the doc.");
           box.print();
           common.failure("If ANY work is selected for a host the first slave " +
                          "on that host MUST have work.");
@@ -280,7 +280,7 @@ public class WhereWhatWork
    * However, streams MAY run on multiple slaves; the code makes sure that these
    * slaves use different StreamContext() instances.
    */
-  public static boolean mustRunOnSingleSlave(WD_entry wd)
+  public static boolean mustRunOnSingleSlave(WD_entry wd, WG_entry wg)
   {
     if (wd.stream_count != 0)
       return false;
@@ -288,14 +288,14 @@ public class WhereWhatWork
     boolean rc;
 
     if (Validate.isRealValidate()  ||
-        wd.seekpct <= 0            ||
+        wg.seekpct <= 0            ||
         ReplayInfo.isReplay())
       rc = true;
     else
       rc = false;
 
-    if (common.get_debug(common.PLOG_WG_STUFF))
-      common.ptod("mustRunOnSingleSlave: wd=%s %5b rv=%b seek=%d", wd.wd_name, rc, Validate.isRealValidate(), (int) wd.seekpct);
+    if (common.get_debug(common.PTOD_WG_STUFF))
+      common.ptod("mustRunOnSingleSlave: wd=%s %5b rv=%b seek=%d", wd.wd_name, rc, Validate.isRealValidate(), (int) wg.seekpct);
 
     return rc;
   }

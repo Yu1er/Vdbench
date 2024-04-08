@@ -29,10 +29,15 @@ class FwdEntry implements Cloneable
   public  double[]  xfersizes     = new double[] { 4096 };
 
   public  boolean   select_random = false;
+  public  boolean   selseq_start0 = true;
+  public  boolean   select_full   = false;
+  public  boolean   select_empty  = false;
+  public  boolean   select_nfull  = false;
   public  boolean   select_once   = false;
   public  double    poisson_skew  = 0;
 
   public  boolean   sequential_io = true;
+  public  boolean   seq_io_start0 = true;
   public  boolean   del_b4_write  = false;
   public  boolean   file_sharing  = false;
   public  long      stopafter     = Long.MAX_VALUE;
@@ -44,9 +49,9 @@ class FwdEntry implements Cloneable
 
   private int       operation     = Operations.getOperationIdentifier("read");
 
-  public  static int max_fwd_name = 0;
+  public  static int max_fwd_name = 1;
 
-  private static    Vector fwd_list = new Vector(8);
+  private static    Vector <FwdEntry>  fwd_list = new Vector(8);
   public  static    boolean  format_fwd_found = false;
   public  static    FwdEntry recovery_fwd = null;
   public  static    FwdEntry dflt     = new FwdEntry();
@@ -277,12 +282,13 @@ class FwdEntry implements Cloneable
     }
 
     /* fileselect=seq if fileio=shared is used: */
-    for (int i = 0; i < fwd_list.size(); i++)
-    {
-      FwdEntry fwd = (FwdEntry) fwd_list.elementAt(i);
-      if (fwd.file_sharing && fwd.select_random)
-        common.failure("'fileio=(random,shared)' and 'fileselect=random' are mutually exclusive");
-    }
+    // Removed 06/30/17 per SJ. (Never could remember why I had this)
+    //for (int i = 0; i < fwd_list.size(); i++)
+    //{
+    //  FwdEntry fwd = (FwdEntry) fwd_list.elementAt(i);
+    //  if (fwd.file_sharing && fwd.select_random)
+    //    common.failure("'fileio=(random,shared)' and 'fileselect=random' are mutually exclusive");
+    //}
 
     /* If 'target' is specified, operation=copy/move is required */
     for (int i = 0; i < fwd_list.size(); i++)
@@ -309,6 +315,20 @@ class FwdEntry implements Cloneable
                            "or 'operation=copy'");
         }
       }
+    }
+
+    for (FwdEntry fwd : fwd_list)
+    {
+
+      int number = 0;
+      if (fwd.select_empty) number++;
+      if (fwd.select_full)  number++;
+      if (fwd.select_nfull) number++;
+      if (number > 1)
+        common.failure("fileselect=empty/full/notfull options are mutually exclusive");
+
+      if (fwd.select_empty && !fwd.sequential_io)
+        common.failure("fileselect=empty and fileio=random are mutually exclusive");
     }
   }
 
@@ -418,9 +438,11 @@ class FwdEntry implements Cloneable
       }
     }
 
-    else if ("sequential".startsWith(prm.alphas[0]))
+    else if (prm.alphas[0].startsWith("seq"))
     {
       sequential_io = true;
+      if (prm.alphas[0].contains("nz"))
+        seq_io_start0 = false;
       if (prm.getAlphaCount() > 1)
       {
         if ("delete".startsWith(prm.alphas[1]))
@@ -449,11 +471,24 @@ class FwdEntry implements Cloneable
       if ("random".startsWith(parm))
         select_random = true;
 
-      else if ("sequential".startsWith(parm))
+      else if (parm.startsWith("seq"))
+      {
         select_random = false;
+        if (parm.contains("nz"))
+          selseq_start0 = false;
+      }
 
       else if (parm.equals("once"))
         select_once = true;
+
+      else if (parm.equals("full"))
+        select_full = true;
+
+      else if (parm.equals("empty"))
+        select_empty = true;
+
+      else if (parm.equals("notfull"))
+        select_nfull = true;
 
       else if (parm.equals("skewed"))  // renamed to 'poisson' after first tests
       {
@@ -487,5 +522,8 @@ class FwdEntry implements Cloneable
       else
         common.failure("Invalid 'fileselect' parameter contents: " + parm);
     }
+
+    if (select_once && !selseq_start0)
+      common.failure("'fileselect=(seqnz,once)' may not be used together.");
   }
 }

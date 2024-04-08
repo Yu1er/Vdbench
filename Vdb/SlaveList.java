@@ -111,7 +111,7 @@ public class SlaveList
    */
   public static void shutdownAllSlaves()
   {
-    Status.printStatus("Shutting down slaves", null);
+    Status.printStatus("Shutting down slaves");
     shutdown_requested = true;
 
     /* Tell slaves to shut down cleanly: */
@@ -257,7 +257,8 @@ public class SlaveList
   {
     boolean waiting;
     Slave slave = null;
-    Signal signal = new Signal(30);
+    Signal signal  = new Signal(30);
+    Signal signal2 = new Signal(360);
 
     do
     {
@@ -275,6 +276,10 @@ public class SlaveList
 
       if (waiting)
       {
+        if (signal2.go())
+          common.failure("SlaveList.waitForSlaveWorkCompletion(). Giving up after %d seconds ",
+                         signal2.getDuration());
+
         common.sleep_some(100);
         if (signal.go())
           common.ptod("SlaveList.waitForSlaveWorkCompletion(): " + slave.getLabel());
@@ -353,7 +358,7 @@ public class SlaveList
       common.sleep_some(20);
     }
 
-    Status.printStatus("Starting slaves", null);
+    Status.printStatus("Starting slaves");
   }
 
 
@@ -445,6 +450,10 @@ public class SlaveList
       work.miscellaneous      = MiscParms.getMiscellaneous();
       //if (work.miscellaneous.size() == 0)
       //  common.failure("debugging");
+
+      work.nw_monitor_needed = Operations.isOperationUsed(Operations.PUT) ||
+                               Operations.isOperationUsed(Operations.GET);
+      work.nw_monitor_now    = rd.getOrPutUsed();
     }
 
     String slave_mask = "slv=%-" + Slave.max_slave_name  + "s ";
@@ -460,6 +469,8 @@ public class SlaveList
       {
         work.fwgs_for_slave.add(fwg);
 
+        slave.addFsdName(fwg.fsd_name);
+
         if (run) //  && common.get_debug(common.DETAIL_SLV_REPORT))
           common.plog(slave_mask + fwd_mask + fsd_mask +
                       "anchor=%s threads=%2d skew=%5.2f operation=%s ",
@@ -472,13 +483,20 @@ public class SlaveList
       }
     }
 
+    if (work.nw_monitor_needed)
+    {
+      if (slave.getHost().getSlaves().size() > 1 ||
+          Host.getHostNames().length > 1) // || work.fwgs_for_slave.size() > 1)
+        common.failure("'cloud' currently only allowed for ONE host, ONE slave, ONE Fsd, ONE Fwd");
+    }
+
     /* Set a flag that allows an old control file to be preserved: */
     if (work != null)
     {
       if (work.format_run)
         work.keep_controlfile = false;
       else
-        work.keep_controlfile = Operations.keepControlFile(work.fwgs_for_slave);
+        work.keep_controlfile = ControlFile.keepControlFile(work.fwgs_for_slave);
     }
 
 
@@ -612,6 +630,7 @@ public class SlaveList
 
     while (true)
     {
+      boolean message = signal.go();
       boolean waiting = false;
       for (int i = 0; i < slave_list.size(); i++)
       {
@@ -619,8 +638,7 @@ public class SlaveList
         if (slave.getCurrentWork() != null && !slave.isReadyToGo())
         {
           waiting = true;
-          common.sleep_some(100);
-          if (signal.go())
+          if (message)
           {
             String txt = "Waiting for slave synchronization: " + slave.getLabel();
             if (slave.getStructurePending())
@@ -632,6 +650,7 @@ public class SlaveList
 
       if (!waiting)
         return;
+      common.sleep_some(100);
     }
   }
 
@@ -645,6 +664,18 @@ public class SlaveList
       Slave slave = (Slave) slave_list.elementAt(i);
       if (slave.getCurrentWork() != null)
         slave.getSocket().putMessage(new SocketMessage(SocketMessage.SLAVE_GO));
+    }
+  }
+
+  /**
+   * Send message to all slaves telling them to stop generating new work.
+   */
+  public static void stopAllWork()
+  {
+    for (Slave slave : slave_list)
+    {
+      if (slave.getCurrentWork() != null)
+        slave.getSocket().putMessage(new SocketMessage(SocketMessage.STOP_NEW_IO));
     }
   }
 

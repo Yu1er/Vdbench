@@ -37,7 +37,8 @@ public class Slave
 
   private SlaveStarter slave_starter;
 
-  private HashMap <String, String> names_used = new HashMap(16);
+  private HashMap <String, String> anchors_used = new HashMap(16);
+  private HashMap <String, String> fsds_used    = new HashMap(16);
 
   private boolean seqwork_done             = false;
   private boolean connected                = false;
@@ -288,8 +289,8 @@ public class Slave
     connected = true;
     common.plog("Slave %s (pid %6s) connected to master %s", this.slave_label, pid,
                 common.getProcessIdString());
-    Status.printStatus(String.format("Slave %s (pid %6s) connected to master %s", slave_label, pid,
-                  common.getProcessIdString()), null);
+    Status.printStatus("Slave %s (pid %6s) connected to master %s", slave_label, pid,
+                       common.getProcessIdString());
   }
   public boolean isConnected()
   {
@@ -360,19 +361,41 @@ public class Slave
     return false;
   }
 
+  public boolean isUsingFsd(FsdEntry fsd)
+  {
+    if (current_work == null)
+      return false;
+
+    for (FwgEntry fwg : current_work.fwgs_for_slave)
+    {
+      if (fwg.fsd_name.equals(fsd.name))
+        return true;
+    }
+
+    return false;
+  }
+
   /**
    * Maintain a list of which SD or FSD anchor names are used on this slave.
    * This info will be used with Data Validation to make sure that an SD or FSD
    * always stays on the same slave.
    */
-  public void addName(String name)
+  public void addFsdName(String name)
   {
-    names_used.put(name, name);
+    fsds_used.put(name, name);
+  }
+  public void addAnchorName(String name)
+  {
+    anchors_used.put(name, name);
   }
 
-  public String[] getNamesUsedList()
+  public String[] getFsdsUsed()
   {
-    return (String[]) names_used.keySet().toArray(new String[0]);
+    return(String[]) fsds_used.keySet().toArray(new String[0]);
+  }
+  public String[] getAnchorsUsed()
+  {
+    return(String[]) anchors_used.keySet().toArray(new String[0]);
   }
 
 
@@ -394,22 +417,32 @@ public class Slave
   public void clearWorkloads()
   {
     wgs_for_slave.clear();
-    names_used.clear();
+    anchors_used.clear();
+    fsds_used.clear();
   }
 
   public void addWorkload(WG_entry wg, RD_entry rd)
   {
-    //common.where(8);
     wgs_for_slave.add(wg);
-    addName(wg.sd_used.sd_name);
     //common.ptod("addWorkload() to rd=%-10s,slave=%s %s (%d)",
     //            rd.rd_name, getLabel(), wg.report(rd), wgs_for_slave.size());
   }
 
+
+  /**
+   * Note: we sort the list EACH time.
+   * That's not really necessary, we could just make sure that a one-time sort
+   * for wgs_for_slave is done.
+   * Worse, if this call is part of Host.getAllWorkloads() it is sorted again.
+   *
+   * However, the extra 'efficiency' here is not worth the effort.
+   */
   public ArrayList <WG_entry> getWorkloads()
   {
     //common.where(8);
     //common.ptod("wgs_for_slave: " + wgs_for_slave.size());
+
+    WG_entry.sortWorkloads(wgs_for_slave, "sd");
     return wgs_for_slave;
   }
 
@@ -419,9 +452,11 @@ public class Slave
    * Note that we can not just compare the instance. That could be a clone, so
    * we therefore need to compare the wd_name and sd.
    */
-  public int removeWorkload(WG_entry remove)
+  public int removeWorkload(WG_entry remove, RD_entry rd)
   {
     //common.ptod("remove:      %s %s", remove.wd_name, remove.sd_used.sd_name);
+
+
 
     int removes = 0;
     for (int i = 0; i < wgs_for_slave.size(); i++)
@@ -433,7 +468,7 @@ public class Slave
       {
         wgs_for_slave.set(i, null);
         removes++;
-        RD_entry.printWgInfo("Removed wd=%s from slave=%s", wg.wd_name, getLabel());
+        RD_entry.printWgInfo("Removed wd=%s,sd=%s from slave=%s", wg.wd_name, wg.sd_used.sd_name, getLabel());
       }
     }
     while (wgs_for_slave.remove(null));

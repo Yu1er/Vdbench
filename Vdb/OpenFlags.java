@@ -135,10 +135,15 @@ public class OpenFlags implements java.io.Serializable, Cloneable
 
     else if (common.onWindows())
     {
-      for (int i = 0; i < parm_list.length; i++)
+      for (String parm : parm_list)
       {
-        String parm = parm_list[i];
         String tmp  = parm.toLowerCase();
+
+        if (tmp.equals("o_dsync") || tmp.equals("o_rsync") || tmp.equals("o_sync"))
+        {
+          common.ptod("Windows: changing openflags=%s to openflags=directio", tmp);
+          tmp = "directio";
+        }
 
         if (tmp.equals("directio")) temp_open_flags |= WINDOWS_DIRECTIO;
 
@@ -199,6 +204,20 @@ public class OpenFlags implements java.io.Serializable, Cloneable
           else if (tmp.equals("o_sync"))    temp_open_flags  |= 0x101000;
           else if (tmp.equals("o_direct"))  temp_open_flags  |= 0x20000;
           else if (tmp.equals("directio"))  temp_open_flags  |= 0x20000;
+          else if (tmp.startsWith("0x"))    temp_open_flags  |= hexFlags(tmp);
+          else if (tmp.equals("fsync"))     temp_other_flags |= FSYNC_ON_CLOSE;
+
+          else
+            common.failure("Invalid 'openflags=' parameter for Linux: " + parm);
+        }
+
+        else if (arch.equals("sparcv9"))
+        {
+          if (     tmp.equals("o_dsync"))   temp_open_flags  |=   0x2000;
+          else if (tmp.equals("o_rsync"))   temp_open_flags  |= 0x802000;
+          else if (tmp.equals("o_sync"))    temp_open_flags  |= 0x802000;
+          else if (tmp.equals("o_direct"))  temp_open_flags  |= 0x100000;
+          else if (tmp.equals("directio"))  temp_open_flags  |= 0x100000;
           else if (tmp.startsWith("0x"))    temp_open_flags  |= hexFlags(tmp);
           else if (tmp.equals("fsync"))     temp_other_flags |= FSYNC_ON_CLOSE;
 

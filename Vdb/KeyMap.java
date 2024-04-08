@@ -139,10 +139,10 @@ public class KeyMap
    * This is needed when a file is either deleted or created, though at
    * creation we should actually already find everything cleared.
    */
-  public void clearMapForFile(long file_size)
+  public void clearMapForFile(long file_size, DV_map map)
   {
     for (long size = 0; size < file_size; size += key_block_size)
-      dv_map.dv_set(file_start_lba + size, 0);
+      map.dv_set(file_start_lba + size, 0);
   }
 
 
@@ -152,7 +152,7 @@ public class KeyMap
    * This includes specific Key Block info when dedup and/or Data Validation is
    * used.
    *
-   * If ANY key block is in error, return FALSE: "don't touch this block"
+   * If ANY key block is in error, return TRUE: "don't touch this block"
    */
   public boolean storeDataBlockInfo(long f_lba, long xfer, DV_map dvmap)
   {
@@ -214,7 +214,7 @@ public class KeyMap
 
     /* Proper key values are only needed for DV and Dedup: */
     if (!Validate.isRealValidate() && !Validate.isValidateForDedup())
-      return true;
+      return false;
 
 
     //common.ptod("pattern_length: " + pattern_length);
@@ -231,10 +231,7 @@ public class KeyMap
 
       /* A bad block will never be reused! */
       if (key == DV_map.DV_ERROR)
-      {
         block_in_error = true;
-        return false;
-      }
 
       key_map[i] = key;
 
@@ -244,7 +241,7 @@ public class KeyMap
       //common.ptod("key_map[i]: " + key_map[i]);
     }
 
-    return true;
+    return block_in_error;
   }
 
   public boolean badDataBlock()
@@ -431,6 +428,8 @@ public class KeyMap
         //  key_map[i] = dv_map.flipflop(key_map[i]);
         //  //common.ptod("flipflop1: %,12d %016x %s", block, set, Dedup.xlate(set));
         //}
+        
+        dv_map.getDedup().unique_writes++; //wen:added
       }
 
       /* Dedup for duplicate blocks: without flipflop: no flipflop */
@@ -439,6 +438,7 @@ public class KeyMap
         //if (Dedup.getKey(set) != 0)
         //  common.failure("During THIS test key should not be other than zero: %016x", set);
 
+        dv_map.getDedup().duplicate_writes++;  //wen:added
         continue;
       }
 
@@ -456,14 +456,31 @@ public class KeyMap
       }
 
       /* Dedup for duplicate blocks: with flipflop: flipflop */
-      else
+      else  
       {
-        //common.ptod("key_map[i]1: " + key_map[i]);
-        key_map[i] = dv_map.flipflop(key_map[i]);
-        //common.ptod("key_map[i]2: " + key_map[i]);
+        // //common.ptod("key_map[i]1: " + key_map[i]);
+        // key_map[i] = dv_map.flipflop(key_map[i]);
+        // //common.ptod("key_map[i]2: " + key_map[i]);
+        // dv_map.getDedup().duplicate_writes++;
+
+        Dedup dedup = dv_map.getDedup();
+        int key_of_set = dedup.GetKeyofDedupSet(lba);
+        if(key_map[i] == key_of_set) {
+          key_map[i] = dv_map.dv_increment(key_of_set, set | Dedup.UNIQUE_BLOCK_MASK);
+          dedup.SetKeyofDedupSet(lba, key_map[i]);
+          dedup.SetMainLBAofSet(lba, lba);
+          dedup.fail_duplicate_writes++;
+          dedup.unique_writes++;
+        }
+        else {
+          key_map[i] = key_of_set;
+          dedup.duplicate_writes++;
+        }
+        
         if (key_map[i] == 0)
-          common.failure("Increment keys results in a zero key");
+          common.failure("mapped keys is a zero key");
         //common.ptod("flipflop3: %,12d %016x", block, set);
+        // set |= Dedup.UNIQUE_BLOCK_MASK;
       }
 
       /* The new DV key must be replaced in the set: */
@@ -563,13 +580,19 @@ public class KeyMap
       long lba    = file_start_lba + data_lba + i * key_block_size;
       dv_map.dv_set(lba, DV_map.DV_ERROR);
     }
+
+    block_in_error = true;
   }
 
   /**
    * If the 'validate=time' option is used, save the last successful TS.
    * The flags below are stored in byte0 over the timestamp.
    */
-  public void saveTimestamp(long type)
+  public void saveCurrentTod(long type)
+  {
+    saveTimestamp(type, System.currentTimeMillis());
+  }
+  public void saveTimestamp(long type, long tod)
   {
     if (!Validate.isStoreTime())
       return;
@@ -578,8 +601,19 @@ public class KeyMap
 
     for (int i = 0; i < key_count; i++)
     {
-      dv_map.save_timestamp(lba + i * key_block_size, type);
+      dv_map.save_timestamp(lba + i * key_block_size, type, tod, key_map[i]);
     }
+  }
+
+  public void saveWriteXfer(int xfer)
+  {
+    if (!Validate.isXferHistory())
+      return;
+
+    long lba = file_start_lba + file_lba;
+
+    for (int i = 0; i < key_count; i++)
+      dv_map.storeWriteXfer(lba + i * key_block_size, xfer);
   }
 
   public void countRawReadAndValidates(SD_entry sd, long lba)
@@ -757,10 +791,8 @@ public class KeyMap
     if (Validate.isMapOnly()) // || format)
       return;
 
-    /* If the block is in error, don't write AFTER image: */
-    /* This will leave this block as 'write pending'. */
-    if (dv_map.dv_get(file_start_lba + file_lba) == DV_map.DV_ERROR)
-      return;
+    /* If the block is in error, mark all key blocks in error: */
+    boolean bad_write = (dv_map.dv_get(file_start_lba + file_lba) == DV_map.DV_ERROR);
 
     HelpDebug.abortAfterCount("writeAfterJournalImage");
 
@@ -770,7 +802,10 @@ public class KeyMap
       {
         long lba   = file_start_lba + file_lba;
         long block = (lba / key_block_size + i);
-        dv_map.journal.writeJournalEntry(0, block, (i + 1) == key_count);
+        if (bad_write)
+          dv_map.journal.writeJournalEntry(DV_map.DV_ERROR, block, (i + 1) == key_count);
+        else
+          dv_map.journal.writeJournalEntry(0, block, (i + 1) == key_count);
       }
     }
   }
@@ -803,6 +838,7 @@ public class KeyMap
       compressions[i] = Dedup.getUniqueCompressionOffset(lba);
     }
   }
+
 
   public static void main(String[] args)
   {

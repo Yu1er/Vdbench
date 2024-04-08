@@ -153,7 +153,7 @@ public class Vdb_scan
 
       /* If the included file name does not contain a file separator, prefix */
       /* it with the parent directory of the --current-- parameter file:     */
-      String prev_parent = new File(previous).getParent();
+      String prev_parent = new File(previous).getCanonicalFile().getParentFile().getParent();
       if (include.indexOf(File.separator) == -1)
         include = prev_parent + File.separator + include;
       include = new File(include).getAbsolutePath();
@@ -165,8 +165,8 @@ public class Vdb_scan
         include = new File(split[1]).getAbsolutePath();
         if (!Fget.file_exists(include))
         {
-          common.ptod("Attempted to find include file '%s'", prev);
           common.ptod("Attempted to find include file '%s'", include);
+          common.ptod("Attempted to find include file '%s'", prev);
           common.failure("include=%s file not found", split[1]);
         }
       }
@@ -759,7 +759,7 @@ public class Vdb_scan
     /* If the rest of the parameters do not start with '(', just pick parameter: */
     if (!rest.startsWith("(") )
     {
-      prm.raw_values.add(rest);
+      prm.addRawValue(rest);
       prm.parms_alfa_or_num(rest, index);
       prm.parms_array_resize();
       return prm;
@@ -789,9 +789,11 @@ public class Vdb_scan
       /* ugly that I am stuck with not easily allowing a mix of alpha and numeric          */
       /* parameters which started causing problems for fileselect.                         */
       /* And ultimately I think it would be better anyway to slowly get rid of this parser.*/
-      if (prm.keyword.equals("fileselect") || "seekpct".startsWith(prm.keyword) )
+      if (prm.keyword.equals("fileselect")  ||
+          "seekpct".startsWith(prm.keyword) ||
+          "timeout".startsWith(prm.keyword))
       {
-        prm.raw_values.add(token);
+        prm.addRawValue(token);
         continue;
       }
 
@@ -845,6 +847,27 @@ public class Vdb_scan
     return txt;
   }
 
+
+  /**
+   * Remove temporary replacement of special characters from a raw value and the
+   * Thsi is a consequence of method Vdb_scan.specialize().
+   */
+  private void addRawValue(String raw)
+  {
+    /* Remove '[' if needed (was used to allow blanks within quotes): */
+    raw = raw.replace('[', ' ');
+
+    /* Remove '^' if needed (was used to allow commas within quotes): */
+    raw = raw.replace('^', ',');
+
+    /* Remove '{' if needed (was used to allow '=' within quotes): */
+    raw = raw.replace('{', '=');
+
+    /* Remove '}' if needed (was used to allow '-' within quotes): */
+    raw = raw.replace('}', '-');
+
+    raw_values.add(raw);
+  }
 
   /**
    * Method to accept information like 128k, 110g, etc

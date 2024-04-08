@@ -37,6 +37,7 @@ public class BadKeyBlock
   public String      last_used_txt;
   public String      last_used_op;
   public long        first_error_found = System.currentTimeMillis();
+  private int        dedup_set_printed = 0;
 
   public String      fname;
 
@@ -95,6 +96,21 @@ public class BadKeyBlock
 
     reportTimeLine();
 
+    /* A duplicate block has all of its duplicates reported once per key block: */
+    if (Dedup.isDuplicate(first.dedup_set) && dedup_set_printed++ == 0)
+    {
+      ArrayList <String> lines = Dedup.reportDedupSetTimes(first.dedup_set);
+      if (lines != null)
+      {
+        plog("Timeline, in tod order, of all duplicates of this duplicate key block:");
+        plog("Note: info is for THIS slave only. Use the 'jvms=1' host parameter if needed.");
+        plog("Note: info may change during or after reporting because i/o may be ongoing!");
+        for (String line : lines)
+          plog(line);
+        plog("");
+      }
+    }
+
     if (sectors == sectors_added)
     {
       plog("   All %d sectors in this key block are corrupted.", sectors);
@@ -103,6 +119,7 @@ public class BadKeyBlock
         plog("   All corruptions are of the same type: ");
         for (String flag : first.getFlagText())
           plog("   ===> " + flag);
+
         plog("   Only the FIRST sector will be reported:");
         first.printOneSector();
 
@@ -296,10 +313,20 @@ public class BadKeyBlock
     else if (Validate.isStoreTime() && last_used_tod == 0)
       plog("   This key block has not been used (yet) during this vdbench test.");
 
-    else if (Validate.isStoreTime())
+    else if (Validate.isXferHistory())
+    {
+      if (!Validate.isJournaling())
+      {
+        int last_xfer = first.dv.getWriteXfer(key_lba);
+        sort_helper.add(String.format("%032d0001 %s Key block was last written as part " +
+                                      "of an xfersize=%d write request.",
+                                      last_used_tod, last_used_txt, last_xfer));
+      }
+
       sort_helper.add(String.format("%032d0001 %s Key block was last %s. " +
                                     "(Timestamp is taken just AFTER the actual read or write).",
                                     last_used_tod, last_used_txt, last_used_op));
+    }
 
     if (!first.bad_checksum && Dedup.isUnique(first.dedup_set))
     {
@@ -413,6 +440,8 @@ public class BadKeyBlock
     else if (pending_flag == DV_map.PENDING_KEY_ROLL_DEDUP)
     {
       common.ptod("proof that we have PENDING_KEY_ROLL_DEDUP");
+
+      /* Problem: if we do 'random starting key for flipflop' '2' is the wrong one here. */
       before_key = 2;
     }
 
@@ -440,8 +469,8 @@ public class BadKeyBlock
       unique = bads.dv.getDedup().getDedupPct() == 100. || bitmap.isUnique(block);
     }
 
-    int before_keys = countKeys(lba, buffer, bads.key_blksize, before_key, unique);
-    int after_keys  = countKeys(lba, buffer, bads.key_blksize, after_key,  unique);
+    int before_keys = countKeys(buffer, bads.key_blksize, before_key, unique);
+    int after_keys  = countKeys(buffer, bads.key_blksize, after_key,  unique);
 
     plog("sectors: %d; before_key: %d; after_key: %d; before_keys: %d; after_keys: %d ",
          sectors, before_key, after_key, before_keys, after_keys);
@@ -471,6 +500,10 @@ public class BadKeyBlock
       * journal creation' and the current time of day.  That then can be an
       * other paranoia check.  Again, I'll leave current code alone.
       *
+      * A better suggestion was though to no longer start with key=01, but
+      * instead with a random key. That way we virtually eliminate this hole.
+      * Implemented 05/05/2017.
+      *
       */
 
     /* If the previous key was 0 we can't really trust the data at all.             */
@@ -484,7 +517,7 @@ public class BadKeyBlock
     if (pending_flag == DV_map.PENDING_KEY_0)
     {
       plog("checkPendingKeyBlock for key lba 0x%08x key 0x%02x. "+
-           "This was the first write, results always unpredictable. Blocki set to 'unknown'",
+           "This was the first write, results always unpredictable. Block set to 'unknown'",
            key_lba, bads.key_expected);
       bads.dv.dv_set(key_lba, 0x00 | 0x80);
       return true;
@@ -530,7 +563,19 @@ public class BadKeyBlock
       return false;
     }
 
+    // Forum, 04/13/17:
+    //   I have a 1m key block, 2022 after keys, followed by 26 before keys.
+    //   That should be acceptable.
+    //   I should have to verify that those keys are all in sequence, all 2022 at the beginning.
+    //   And then reset the 26.
+    // Nope!
+    //   Vdbench can not handle incomplete key blocks.
+    //   This is a hole in the code, how to handle that?
+    //   The best I can do is report, accept, and set the key back to 0, telling
+    //   the code: I don't know this block.
 
+    // However, if by 'rule' a write should either be completely done or not at all, and not PARTIAL
+    // then Vdbench has no problem.
 
     /* All other errors: */
     plog("checkPendingKeyBlock valid before/after keys: %d/%d out of %d sectors",
@@ -538,16 +583,20 @@ public class BadKeyBlock
     plog("checkPendingKeyBlock for lba 0x%08x key 0x%02x. "+
          "Unacceptable mismatch between before/after keys. Block will be marked in error.",
          file_lba, bads.key_expected, after_key);
+    plog("However, because this was a pending write this will not be counted as "+
+         "a FATAL error, but manual verification is highly recommended.");
+    plog("Key values found: %s", createKeySequence(buffer, bads.key_blksize, unique));
     bads.dv.dv_set(file_lba, DV_map.DV_ERROR);
 
-    /* Bad block: */
-    return false;
+    /* Bad block, but don't count as an error: */
+    return true;
   }
 
   /**
-   * Read a block and count the amount of valid keys in the sectors of that block
+   * Look at the buffer of a key block and count the amount of requested keys in
+   * the sectors of that block
    */
-  private int countKeys(long lba, long buffer, int key_blksize, int count_key, boolean unique)
+  private int countKeys(long buffer, int key_blksize, int count_key, boolean unique)
   {
 
     int valid_keys = 0;
@@ -563,7 +612,6 @@ public class BadKeyBlock
         current_key = data_array[offset+4] >> 24;
       else
         current_key = data_array[offset+0] >> 24;
-      //common.ptod("current_key: 0x%02x", current_key);
 
       if (current_key == count_key)
         valid_keys++;
@@ -571,6 +619,50 @@ public class BadKeyBlock
 
     return valid_keys;
   }
+
+
+  /**
+   * Create an expression of the count and the order of keys in all sectors in
+   * the key block
+   */
+  private String createKeySequence(long buffer, int key_blksize, boolean unique)
+  {
+    String txt = "";
+
+    int[] data_array  = new int[ key_blksize / 4];
+    Native.buffer_to_array(data_array, buffer, key_blksize);
+
+    int last_key  = Integer.MAX_VALUE;
+    int key_count = Integer.MAX_VALUE;
+    for (int i = 0; i < sectors; i++)
+    {
+      int offset = (i*128);
+      int current_key;
+      if (unique)
+        current_key = data_array[offset+4] >> 24;
+      else
+        current_key = data_array[offset+0] >> 24;
+
+      if (last_key == Integer.MAX_VALUE)
+      {
+        last_key  = current_key;
+        key_count = 1;
+      }
+      else if (last_key == current_key)
+        key_count++;
+      else
+      {
+        txt += String.format("(%02x),%d ", last_key, key_count);
+        last_key = current_key;
+        key_count = 1;
+      }
+    }
+
+    txt += String.format("(%02x),%d ", last_key, key_count);
+    return txt;
+
+  }
+
 }
 
 

@@ -70,18 +70,21 @@ public class SdReport extends Report
       for (int k = 0; k < slave_sds.length; k++)
       {
         String sdname = slave_sds[k];
-        Report report = new Report(slave.getLabel() + "." + sdname,
-                                   "Slave SD report for sd=" + sdname);
+        Report report = new Report(slave, sdname,
+                                   "Slave SD report for sd=" + sdname, slave_detail);
         slave.addReport(sdname, report);
 
         String txt = "sd=" + sdname + ",host=" + host.getLabel() +
                      ",lun=" + host.getLunNameForSd(SD_entry.findSD(sdname));
 
-        if (k == 0)
-          slave.getSummaryReport().printHtmlLink("Links to slave SD reports",
-                                                 report.getFileName(), txt);
-        else
-          slave.getSummaryReport().printHtmlLink(null, report.getFileName(), txt);
+        if (slave_detail)
+        {
+          if (k == 0)
+            slave.getSummaryReport().printHtmlLink("Links to slave SD reports",
+                                                   report.getFileName(), txt);
+          else
+            slave.getSummaryReport().printHtmlLink(null, report.getFileName(), txt);
+        }
       }
     }
   }
@@ -111,7 +114,7 @@ public class SdReport extends Report
           String txt = "Host SD report for sd=" + sdname +
                        ",host=" + host.getLabel() +
                        ",lun=" + host.getLunNameForSd(SD_entry.findSD(sdname));
-          Report report = new Report(host.getLabel() + "." + sdname, txt);
+          Report report = new Report(host, sdname, txt);
           host.addReport(sdname, report);
 
           txt = "sd=" + sdname +
@@ -126,8 +129,8 @@ public class SdReport extends Report
         }
       }
 
-      if (slave_detail)
-        SdReport.createSlaveSdReports(host);
+      //if (slave_detail)
+      SdReport.createSlaveSdReports(host);
     }
   }
 
@@ -213,7 +216,7 @@ public class SdReport extends Report
       getReport(sdname).reportDetail(stats, kc_total);
       Tnfe_data.writeOneSd(false, sdname, stats);
     }
-    Tnfe_data.flush();
+    //Tnfe_data.flush();
 
     /* Report on the summary report: */
     SdStats stats = getSummaryReport().getData().getIntervalSdStats();
@@ -281,7 +284,7 @@ public class SdReport extends Report
         SdStats slave_sum = slave.getSummaryReport().getData().getTotalSdStats();
         slave.getSummaryReport().reportDetail(slave_sum, kc, avg);
 
-        if (host.getSlaves().size() > 1)
+        if (slave_detail)
           getReport(slave.getLabel(), "histogram").println(slave_sum.printHistograms());
       }
 
@@ -302,7 +305,7 @@ public class SdReport extends Report
       SdStats host_sum = host.getSummaryReport().getData().getTotalSdStats();
       host.getSummaryReport().reportDetail(host_sum, kc, avg);
 
-      if (hosts.size() > 1)
+      if (host_detail)
         getReport(host.getLabel(), "histogram").println(host_sum.printHistograms());
     }
 
@@ -318,7 +321,7 @@ public class SdReport extends Report
       getReport(sd.sd_name, "histogram").println(stats.printHistograms());
       Tnfe_data.writeOneSd(true, sd.sd_name, stats);
     }
-    Tnfe_data.flush();
+    //Tnfe_data.flush();
 
     /* Report on the summary report: */
     SdStats run_totals = getSummaryReport().getData().getTotalSdStats();

@@ -1,12 +1,12 @@
 package VdbComp;
-    
-/*  
- * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved. 
- */ 
-    
-/*  
- * Author: Henk Vandenbergh. 
- */ 
+
+/*
+ * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.
+ */
+
+/*
+ * Author: Henk Vandenbergh.
+ */
 
 import java.awt.*;
 import java.awt.event.*;
@@ -23,8 +23,8 @@ import Utils.common;
  */
 public class ChangeRanges extends JDialog implements ActionListener, MouseListener
 {
-  private final static String c = 
-  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved."; 
+  private final static String c =
+  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.";
 
   private JButton ok_button = new JButton("OK");
   private JButton cancel    = new JButton("Cancel");
@@ -129,7 +129,7 @@ public class ChangeRanges extends JDialog implements ActionListener, MouseListen
 
       Delta.setDeltas(new_deltas);
 
-      if (wlcomp.table_panel != null)
+      if (wlcomp.frame.avg_scroll != null)
         wlcomp.doCompare();
 
       this.dispose();
@@ -151,8 +151,8 @@ public class ChangeRanges extends JDialog implements ActionListener, MouseListen
       }
       Delta.createLabels();
       this.repaint();
-      if (wlcomp.table_panel != null)
-        wlcomp.table_panel.repaint();
+      if (wlcomp.frame.avg_scroll != null)
+        wlcomp.frame.avg_scroll.repaint();
       //setVisible(true);
     }
   }

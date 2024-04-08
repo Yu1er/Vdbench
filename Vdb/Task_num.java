@@ -322,11 +322,13 @@ public class Task_num
       /* Give up when it takes too long: */
       int seconds = common.get_debug(common.LONG_SHUTDOWN) ? 15*60 : 5*60;
       if (Native.get_simple_tod() - start_wait > seconds * 1000 * 1000)
-        return seconds / 60;
+        return seconds;
 
       common.sleep_some(99);
     }
 
+    if (common.get_debug(common.FORCE_SHUTDOWN))
+      return 999;
     return 0;
   }
 
@@ -479,11 +481,14 @@ public class Task_num
     int term_count = 0;
     for (Task_num tn : task_list)
     {
-      if (tn.task_name.startsWith("FwgThread"))
+      synchronized (tn)
       {
-        fwgt_count++;
-        if (tn.task_status == TERM)
-          term_count++;
+        if (tn.task_name.startsWith("FwgThread"))
+        {
+          fwgt_count++;
+          if (tn.task_status == TERM)
+            term_count++;
+        }
       }
     }
 

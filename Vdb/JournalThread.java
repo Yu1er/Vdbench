@@ -191,21 +191,10 @@ public class JournalThread extends Thread
         int key3 = array[ j ] >>  8 & 0xff;
         int key4 = array[ j ]       & 0xff;
 
-        // nolock went from 2500/sec to 70000/sec
-        map.dv_set_nolock(key_block++ * key_blksize, key1);
-        map.dv_set_nolock(key_block++ * key_blksize, key2);
-        map.dv_set_nolock(key_block++ * key_blksize, key3);
-        map.dv_set_nolock(key_block++ * key_blksize, key4);
-
-        if (key1 == DV_map.DV_ERROR) bad_blocks++;
-        if (key2 == DV_map.DV_ERROR) bad_blocks++;
-        if (key3 == DV_map.DV_ERROR) bad_blocks++;
-        if (key4 == DV_map.DV_ERROR) bad_blocks++;
-
-        if (key1 != 0) known_blocks++;
-        if (key2 != 0) known_blocks++;
-        if (key3 != 0) known_blocks++;
-        if (key4 != 0) known_blocks++;
+        storeKey(key_block++, key1);
+        storeKey(key_block++, key2);
+        storeKey(key_block++, key3);
+        storeKey(key_block++, key4);
       }
 
       jnl_lba += 512;
@@ -230,6 +219,19 @@ public class JournalThread extends Thread
     Native.freeBuffer(512, buffer);
   }
 
+  private void storeKey(long kblock, int key)
+  {
+    map.dv_set_nolock(kblock * key_blksize, key);
+
+    if (key == DV_map.DV_ERROR)
+    {
+      bad_blocks++;
+      jnl.plog("Key block at 0x08%x is marked in error in journal", kblock * key_blksize);
+    }
+
+    else if (key != 0)
+      known_blocks++;
+  }
 
   /**
    * Wait for a bunch of threads (likely from above) to complete.

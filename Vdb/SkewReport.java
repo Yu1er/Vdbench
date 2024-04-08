@@ -10,6 +10,7 @@ package Vdb;
 
 import java.io.PrintWriter;
 import java.text.SimpleDateFormat;
+import java.util.Arrays;
 import java.util.Date;
 
 import Utils.Format;
@@ -207,8 +208,22 @@ public class SkewReport
     String maxdelta_workload = null;
 
     /* Add up all the i/o done: */
+    int wd_reports = 0;
+    boolean wd_iorate = false;
     for (WD_entry wd : rd.wds_for_rd)
+    {
       total_io += wd.total_io_done;
+      if (wd.wd_is_used)
+        wd_reports++;
+
+      /* WD iorate does not lend itself to properly defining the skew: */
+      if (wd.wd_iorate > 0)
+        wd_iorate = true;
+    }
+
+    /* No workloads to report then we also don't have workload skew: */
+    if (wd_reports == 0)
+      return;
 
     if (rd.wds_for_rd.size() > 1)
     {
@@ -283,7 +298,7 @@ public class SkewReport
     }
 
     /* Display a warning if skew failed WHEN using the Waiter Task: */
-    if (!ReplayInfo.isReplay() && maxdeltapct > 1.0 && rd.use_waiter)
+    if (!ReplayInfo.isReplay() && maxdeltapct > 1.0 && rd.use_waiter && !wd_iorate)
     {
       BoxPrint box = new BoxPrint();
       box.add("Observed Workload skew for wd=%s delta greater than 1%% (%.2f). " +
@@ -385,18 +400,22 @@ public class SkewReport
 
 
       /* Print SD level totals (it's OK to report unused SDs) */
-      if (Report.sdDetailNeeded())
+      /* Even if we don't want detail SD reports, still give me their skew: */
+      //if (Report.sdDetailNeeded())
       {
         int real_sds = 0;
-        for (SD_entry sd : Vdbmain.sd_list)
+
+        SD_entry[] sds = Vdbmain.sd_list.toArray(new SD_entry[0]);
+        Arrays.sort(sds, new SdSort());
+        for (SD_entry sd : sds)
         {
           if (!sd.concatenated_sd)
             real_sds++;
         }
-        if ( real_sds > 1)
+        //if ( real_sds > 1)
         {
           printRawHeaders("SD:");
-          for (SD_entry sd : Vdbmain.sd_list)
+          for (SD_entry sd : sds)
           {
             /* We don't have data based on concat SDs, so skip. We do report Real SDs: */
             if (sd.concatenated_sd)
@@ -428,7 +447,7 @@ public class SkewReport
       for (FwdEntry fwd : rd.fwds_for_rd)
       {
         ReportData rs = Report.getReport(fwd.fwd_name).getData();
-        total_io     += rs.getTotalFwdStats().getTotalRate();
+        total_io     += rs.getTotalFwdStats().getReqstdRate();
       }
 
 
@@ -471,7 +490,8 @@ public class SkewReport
       printFileHeaders("FSD:");
       for (FsdEntry fsd : FsdEntry.getFsdList())
       {
-        printFileLine(fsd.name, Report.getReport(fsd.name).getData().getTotalFwdStats());
+        if (fsd.in_use)
+          printFileLine(fsd.name, Report.getReport(fsd.name).getData().getTotalFwdStats());
       }
 
       if (FsdEntry.getFsdList().size() > 1)
@@ -524,7 +544,7 @@ public class SkewReport
         ptodOrFile("%-12s %7s %10s %7s %7s", "FWD", "ops/sec", "requested", "actual", "delta");
         for (FwdEntry fwd : rd.fwds_for_rd)
         {
-          double fwd_ops   = Report.getReport(fwd.fwd_name).getData().getTotalFwdStats().getTotalRate();
+          double fwd_ops   = Report.getReport(fwd.fwd_name).getData().getTotalFwdStats().getReqstdRate();
           double requested = (fwd.skew != 0) ? fwd.skew : left_per_fwd;
           double actual    = fwd_ops * 100 / total_io;
           double delta     = actual- requested;

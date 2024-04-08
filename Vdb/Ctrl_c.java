@@ -61,10 +61,37 @@ public class Ctrl_c extends Thread
    */
   public void run()
   {
-    ctrlc_active = true;
-    System.out.println("CTRL-C requested. vdbench terminating");
+    System.out.println("CTRL-C requested. Vdbench terminating");
 
-    Status.printStatus("Ctrl-C found", null);
+    Status.printStatus("Ctrl-C found");
+
+    //  Reporter.killVdbench();
+    //
+    //  Signal signal = new Signal(10);
+    //  while (!Vdbmain.vdbench_ended)
+    //  {
+    //    if (signal.go())
+    //    {
+    //      /* Can't risk ptod_lock deadlock here: */
+    //      System.out.printf("Attempted requested Vdbench kill for %d seconds. Giving up\n",
+    //                        signal.getDuration());
+    //      Status.printStatus("Attempted requested Vdbench kill for " + signal.getDuration() +
+    //                         " seconds. Giving up\n", null);
+    //      if (common.log_html != null)
+    //        common.log_html.printf("Attempted requested Vdbench kill for %d seconds. Giving up\n",
+    //                               signal.getDuration());
+    //      break;
+    //    }
+    //    common.sleep_some(1000);
+    //  }
+    //
+    //  /* Vdbench shut down 'normally', no need for cleanup: */
+    //  if (Vdbmain.vdbench_ended)
+    //    return;
+
+    /* This flag prevents stdout output from this point on. */
+    /* is that really neccesary? */
+    ctrlc_active = true;
 
     /* When someone hits ctrl-c we want to make sure that he knows that */
     /* there have been some errors:                                     */
@@ -79,8 +106,9 @@ public class Ctrl_c extends Thread
     }
 
     /* For debugging: if ctrl-c is hit, report some counters: */
-    if (Vdbmain.isFwdWorkload())
-      Blocked.printAndResetCounters();
+    // This got in the way of CTRL-c clean shutdown
+    //if (Vdbmain.isFwdWorkload())
+    //  Blocked.printAndResetCounters();
 
 
     /* This is for debugging, not currently used: */

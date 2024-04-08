@@ -77,6 +77,9 @@ public class DV_map
 
   public HashMap <Long, BadDataBlock> bad_data_map = null;
 
+  private Random start_key_randomizer = new Random();
+
+
   static Object print_lock = new Object();
 
   static long   compression_seed  = 0;
@@ -138,6 +141,7 @@ public class DV_map
     /* avoid java heap issues when the user turns it on)                     */
     /* Also keep in mind that flipflop is REQUIRED with real DV!             */
     else
+      byte_maps = MapFile.createNewFile(jnl_dir_name, map_name, map_length);  //wen:added
       flipflop_bitmap = new DedupBitMap().createMapForFlipFlop(dedup, map_length, map_name);
 
 
@@ -208,9 +212,9 @@ public class DV_map
       //common.ptod("lba / map_blksize: %,16d", lba / map_blksize);
       boolean bit_set = flipflop_bitmap.getBit(lba / key_blksize);
       if (bit_set)
-        key = 1;
+        key = 2;
       else
-        key = 0;
+        key = 1;
     }
 
     //if (lba == 32768)
@@ -282,12 +286,12 @@ public class DV_map
     else
     {
       /* Store the current value, whether it changed or not: */
-      if (key == 0)
-        flipflop_bitmap.setBit(lba / key_blksize, false);
+      if (key == 2)
+        flipflop_bitmap.setBit(lba / key_blksize, true);
       else
       {
         //common.where(8);
-        flipflop_bitmap.setBit(lba / key_blksize, true);
+        flipflop_bitmap.setBit(lba / key_blksize, false);
       }
       //common.failure("what's this?");
       //common.where();
@@ -581,30 +585,74 @@ public class DV_map
 
   /**
    * This method increments a data pattern key by one. The value of the key
-   * will roll over from the maximum value of 126 back to one. (Remember, value
-   * block has never been written).
+   * will roll over from the maximum value of 126 back to one.
+   *
+   *
+   * Starting 50407 we will not always start with ONE. Instead we start with a
+   * random number between 1 and 126. This allows us to avoid finding and
+   * validating an old block that just 'happens to have' the same key.
+   *
+   *
+   * Question: can we do the same with flipflop?
+   *
+   * I think so: a starting value between 2 and 124, with an exclusive OR to
+   * switch between 2,3,2,3 or 124,125,124,125 or 67,66,67,66
+   * Just make sure we never hit 0 or 127!
+   *
    */
   public int dv_increment(int key, long set)
   {
     /* Normal processing: */
     if (!Dedup.isDedup())
-      return( (key == 126) ? 1 : ++key);
+    {
+      if (key == 0)
+        return getRandomStartKey();
+      else
+        return( (key == 126) ? 1 : ++key);
+    }
 
     if (!dedup.isFlipFlop() && Dedup.isDuplicate(set))
       common.failure("Duplicate set key value should never been incremented without flipflop");
 
-    /* For Dedup with DV we MUST flipflop. Without flipflop we would never */
-    /* change data patterns making DV useless:                             */
-    //else if (!dedup.isFlipFlop()) // (!Validate.isRealValidate() && !dedup.isFlipFlop())
-    //  return key;
+    /* Unique blocks don't need flipflop, they always change: */
+    if (Dedup.isUnique(set))
+    {
+      if (key == 0)
+        return getRandomStartKey();
+      else
+        return( (key == 126) ? 1 : ++key);
+    }
 
-    /* We won't be called when flipflop is not needed! */
     synchronized (dedup)
     {
       dedup.flipflops++;
-      //common.where();
     }
-    return( (key >= dedup.getMaxKey()) ? 1 : ++key);
+
+    /* When starting with a random key for flipflop, how do I know it is time to flip? */
+    /* Even/odd! XOR */
+    /* Max will be 124 since I do not want to take the risk that the new random */
+    /* starting key will ever roll over from 126 to 1 */
+    if (key == 0)
+      return getRandomStartKey();
+
+    /* XOR will flipflop for me: */
+    return( key ^ 0x01);
+  }
+
+  /**
+   * Randomizer call: Math.abs() will return a NEGATIVE number when the input
+   * equals Integer.MIN_VALUE:
+   *
+   * https://stackoverflow.com/questions/5444611/math-abs-returns-wrong-value-for-integer-min-value
+   *
+   */
+  private int getRandomStartKey()
+  {
+    int next_int = start_key_randomizer.nextInt();
+    if (next_int == Integer.MIN_VALUE)
+      next_int = 0;
+
+    return (Math.abs(next_int) % 126) + 1;
   }
 
   /**
@@ -662,7 +710,7 @@ public class DV_map
     if (timestamp_map == null)
       return 0;
 
-    long ret = timestamp_map.getTime(lba / key_blksize);
+    long ret = timestamp_map.getLastTime(lba / key_blksize);
     return ret;
   }
 
@@ -674,6 +722,17 @@ public class DV_map
     else
     {
       String ret = timestamp_map.getLastOperation(lba / key_blksize);
+      return ret;
+    }
+  }
+
+  public int getLastKey(long lba)
+  {
+    if (timestamp_map == null)
+      return 0;
+    else
+    {
+      int ret = timestamp_map.getLastKey(lba / key_blksize);
       return ret;
     }
   }
@@ -754,11 +813,26 @@ public class DV_map
    * Store timestamp of last successful read/write.
    * No lock is necessary, since we use a full 8 bytes and the block is still busy.
    */
-  public void save_timestamp(long lba, long type)
+  public void save_timestamp(long lba, long type, long tod, long key)
   {
     /* Store timestamp of last successful i/o if needed: */
     if (timestamp_map != null)
-      timestamp_map.storeTime(lba / key_blksize, type);
+      timestamp_map.storeTime(lba / key_blksize, type, tod, key);
+  }
+
+  public void storeWriteXfer(long lba, int xfer)
+  {
+    /* Store timestamp of last successful i/o if needed: */
+    if (Validate.isXferHistory())
+      timestamp_map.storeWriteXfer(lba / key_blksize, xfer);
+  }
+
+  public int getWriteXfer(long lba)
+  {
+    /* Store timestamp of last successful i/o if needed: */
+    if (timestamp_map != null)
+      return timestamp_map.getLastXfersize(lba / key_blksize);
+    return 0;
   }
 
 
@@ -827,7 +901,6 @@ public class DV_map
 
     SimpleDateFormat df = new SimpleDateFormat( "EEEE, MMMM d, yyyy HH:mm:ss.SSS zzz" );
     df.setTimeZone(TimeZone.getTimeZone("PST"));
-    common.ptod("date: " + df.format(new Date(tod/1000)));
 
     //int ck = 0;
     //for (int i = 0; i < stamp.length(); i+=2)
@@ -922,31 +995,31 @@ public class DV_map
                   "key blocks marked in error: %4d ", validation_reads, bad_blocks);
 
 
-    if (validation_reads == 0)
-    {
-      if (SlaveWorker.work.work_rd_name.startsWith(SD_entry.SD_FORMAT_NAME))
-        return;
-      if (SlaveWorker.work.format_run)
-        return;
-      if (SlaveWorker.work.only_eof_writes)
-        return;
-      if (Validate.skipRead())
-        return;
+    // if (validation_reads == 0)
+    // {
+    //   if (SlaveWorker.work.work_rd_name.startsWith(SD_entry.SD_FORMAT_NAME))
+    //     return;
+    //   if (SlaveWorker.work.format_run)
+    //     return;
+    //   if (SlaveWorker.work.only_eof_writes)
+    //     return;
+    //   if (Validate.skipRead())
+    //     return;
 
-      txt.removeAllElements();
-      txt.add("No read validations done during a Data Validation run.");
-      txt.add("This means very likely that your run was not long enough to");
-      txt.add("access the same data block twice. ");
-      txt.add("There are several solutions to this: ");
-      txt.add("- increase elapsed time. ");
-      txt.add("- use larger xfersize. ");
-      txt.add("- use only a subset of your lun by using the 'sd=...,size=' ");
-      txt.add("  parameter or the 'sd=...,range=' parameter.");
-      txt.add("Or, you never did any writes so Vdbench does not know what to ");
-      txt.add("compare the data with. In that case, change the rdpct= parameter.");
-      SlaveJvm.sendMessageToConsole(txt);
-      common.failure("No read validations done during a Data Validation run.");
-    }
+    //   txt.removeAllElements();
+    //   txt.add("No read validations done during a Data Validation run.");
+    //   txt.add("This means very likely that your run was not long enough to");
+    //   txt.add("access the same data block twice. ");
+    //   txt.add("There are several solutions to this: ");
+    //   txt.add("- increase elapsed time. ");
+    //   txt.add("- use larger xfersize. ");
+    //   txt.add("- use only a subset of your lun by using the 'sd=...,size=' ");
+    //   txt.add("  parameter or the 'sd=...,range=' parameter.");
+    //   txt.add("Or, you never did any writes so Vdbench does not know what to ");
+    //   txt.add("compare the data with. In that case, change the rdpct= parameter.");
+    //   SlaveJvm.sendMessageToConsole(txt);
+    //   common.failure("No read validations done during a Data Validation run.");
+    // }
   }
 
 

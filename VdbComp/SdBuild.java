@@ -133,6 +133,7 @@ public class SdBuild extends JFrame implements ActionListener
     else if (common.onWindows())
     {
       top_panel.add(do_windows,  new GridBagConstraints(x++, 0, 1, 1, 1.0, 0.0, GridBagConstraints.CENTER, GridBagConstraints.HORIZONTAL, new Insets(0, 0, 0, 0), 0, 0));
+      top_panel.add(do_fdiskr,  new GridBagConstraints(x++, 0, 1, 1, 1.0, 0.0, GridBagConstraints.CENTER, GridBagConstraints.HORIZONTAL, new Insets(0, 0, 0, 0), 0, 0));
     }
 
     top_panel.add(go_left,    new GridBagConstraints(x++, 0, 1, 1, 1.0, 0.0, GridBagConstraints.CENTER, GridBagConstraints.HORIZONTAL, new Insets(0, 0, 0, 0), 0, 0));

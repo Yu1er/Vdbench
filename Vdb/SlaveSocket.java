@@ -41,11 +41,15 @@ public class SlaveSocket implements Serializable
   private static long bytes_raw    = 0;
   private static long bytes_zip    = 0;
 
-  public static long shortest_delta = Long.MAX_VALUE;
 
   private static int remote_port = 5560;
   private static int master_port = 5570;
 
+  /* This map contains the smallest delta between timestamps from message PUT  */
+  /* to message GET. This is used to calculate how long it takes for a message */
+  /* to arrive regardless of out-of-sync clocks.                               */
+  /* A map is used to keep track of different hosts.                           */
+  private static HashMap <String, Long> shortest_map = new HashMap(32);
 
   private static boolean dont_zip = common.get_debug(common.DONT_ZIP_SOCKET_MSGS);
 
@@ -62,6 +66,7 @@ public class SlaveSocket implements Serializable
     /* a real message arriving has caused some unexplained hangs                */
     socket.setSoTimeout(120 * 1000);
     setBufferSize();
+    socket.setTcpNoDelay(true);
 
     ostream = new ObjectOutputStream(socket.getOutputStream());
     istream = new ObjectInputStream(socket.getInputStream());
@@ -82,6 +87,7 @@ public class SlaveSocket implements Serializable
     ///* I therefore set the timeout to only one second and manually check for    */
     ///* isInterrupted()                                                          */
     socket.setSoTimeout(120 * 1000);
+    socket.setTcpNoDelay(true);
     setBufferSize();
   }
 
@@ -142,18 +148,12 @@ public class SlaveSocket implements Serializable
         if (!dont_zip)
           sm.setData(unCompressObj((byte[]) sm.getData()));
 
-        long delta = sm.receive_time - sm.send_time;
-        if (delta < shortest_delta)
-        {
-          shortest_delta = delta;
-          if (common.get_debug(common.SHOW_SOCKET_MESSAGES))
-            common.ptod("shortest_delta: " + shortest_delta);
-        }
+        storeShortest(sm);
 
         /* Optional report the message size just received on the master: */
-        if (!SlaveJvm.isThisSlave()
-            //&& sm.getMessageNum() == SocketMessage.SLAVE_STATISTICS
-            && common.get_debug(common.REPORT_MESSAGE_SIZE))
+        //if (!SlaveJvm.isThisSlave()
+        //    && common.get_debug(common.REPORT_MESSAGE_SIZE))
+        if (common.get_debug(common.REPORT_MESSAGE_SIZE))
         {
           int    org_size = CompressObject.sizeof(sm);
           int    zip_size = compressObj(sm).length;
@@ -180,6 +180,11 @@ public class SlaveSocket implements Serializable
           return null;
         if (Ctrl_c.active())
           return null;
+        if (slave_label.equals("RshDeamon"))
+        {
+          shutdown_in_progress = true;
+          return null;
+        }
         Vector lines = new Vector(16);
         lines.add("");
         if (!SlaveJvm.isThisSlave())
@@ -251,7 +256,7 @@ public class SlaveSocket implements Serializable
       }
 
       /* Debugging: */
-      long resptime = sm.receive_time - sm.send_time - shortest_delta;
+      long resptime = sm.receive_time - sm.send_time - getShortest(sm);
       if (common.get_debug(common.SHOW_SOCKET_MESSAGES) ||
           common.get_debug(common.SOCKET_TRAFFIC))
       {
@@ -326,7 +331,6 @@ public class SlaveSocket implements Serializable
           if (!dont_zip)
             sm.setData(compressObj(sm.getData()));
 
-          long start = System.currentTimeMillis();
           sm.send_time = System.currentTimeMillis();
           ostream.reset();
           ostream.writeObject(sm);
@@ -341,12 +345,20 @@ public class SlaveSocket implements Serializable
           // In other words: noise.
           //String tmpf = Fput.createTempFileName("one", "two");
           //common.serial_out(tmpf, sm);
-          //common.ptod("length: %8d %s %6d", new File(tmpf).length(),
-          //            sm.getMessageText(), (end - start));
+          //common.ptod("length: %8d %s", new File(tmpf).length(),
+          //            sm.getMessageText());
         }
 
         catch (SocketException e)
         {
+          if (slave_label.equals("RshDeamon"))
+          {
+            if (!shutdown_in_progress)
+              common.ptod("Shutting down socket to rsh user");
+            shutdown_in_progress = true;
+            return false;
+          }
+
           /* If the slave already told us he is aborting, don't bother any more: */
           if (!SlaveJvm.isThisSlave())
           {
@@ -521,6 +533,26 @@ public class SlaveSocket implements Serializable
       return null;
     }
   }
+
+  private void storeShortest(SocketMessage sm)
+  {
+    long delta = sm.receive_time - sm.send_time;
+    Long shortest_delta = shortest_map.get(slave_name);
+    if (shortest_delta == null)
+      shortest_delta = new Long(Long.MAX_VALUE);
+    if (delta < shortest_delta.longValue())
+      shortest_map.put(slave_name, delta);
+  }
+  private long getShortest(SocketMessage sm)
+  {
+    Long shortest_delta = shortest_map.get(slave_name);
+    if (shortest_delta == null)
+      return 0;
+    else
+    {
+      long lowest = shortest_delta.longValue();
+      //common.ptod("lowest: %s %5d", slave_name, lowest);
+      return lowest;
+    }
+  }
 }
-
-

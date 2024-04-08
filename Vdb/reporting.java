@@ -1,12 +1,12 @@
 package Vdb;
-    
-/*  
- * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved. 
- */ 
-    
-/*  
- * Author: Henk Vandenbergh. 
- */ 
+
+/*
+ * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.
+ */
+
+/*
+ * Author: Henk Vandenbergh.
+ */
 
 import java.lang.String;
 import java.util.Vector;
@@ -23,8 +23,8 @@ import Utils.*;
  */
 public class reporting
 {
-  private final static String c = 
-  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved."; 
+  private final static String c =
+  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.";
 
   String title1;        /* First title line text for this column              */
   String title2;        /* Second column                                      */
@@ -181,14 +181,15 @@ public class reporting
     File dir = new File(newdir);
     if (!output_dir_plus && !dir.exists())
     {
-      if (!dir.mkdir())
+      if (!dir.mkdirs())
         common.failure("Unable to create output directory: " + newdir);
 
       /* Make sure directory has all permissions: */
       if (common.onSolaris())
         OS_cmd.executeCmd("chmod 777 " + newdir);
 
-      common.ptod("Created output directory '" + dir.getAbsolutePath() + "'");
+      if (common.stdout != null)
+        common.ptod("Created output directory '" + dir.getAbsolutePath() + "'");
 
       return dir.getAbsolutePath();
     }
@@ -232,10 +233,11 @@ public class reporting
     /* Create new directory: */
     newdir = newdir + Format.f("%03d", i);
     dir = new File(newdir);
-    if (!dir.mkdir())
+    if (!dir.mkdirs())
       common.failure("Unable to create output directory: " + newdir);
 
-    common.ptod("Created output directory '" + dir.getAbsolutePath() + "'");
+    if (common.stdout != null)
+      common.ptod("Created output directory '" + dir.getAbsolutePath() + "'");
     return dir.getAbsolutePath();
   }
 }

@@ -69,7 +69,7 @@ public class HelpDebug
   }
 
 
-  public static boolean corruptBuffer(long read_buffer, long buffer_size)
+  public static synchronized boolean corruptBuffer(long read_buffer, long buffer_size)
   {
     /* Copy data buffer to java storage: */
     int[] int_buffer = new int[ (int) buffer_size/4 ];
@@ -95,7 +95,14 @@ public class HelpDebug
     //  int_buffer[ 7 ] = 0x07070707;
 
     /* Corrupt key, assuming it is not 77 already: */
-    int_buffer[4] = (int_buffer[4] & 0x00ffffff) | 0x77000000;
+    //int_buffer[2] = 0x77000000;
+    //int_buffer[4] = (int_buffer[4] & 0x00ffffff) | 0x77000000;
+
+    /* Corrupt pid: */
+    int_buffer[2] = 0xbadddddd;
+
+
+    //int_buffer[32] = 0xbadddddd;
 
 
     // Could I force a 'write pending' here for journal recovery?
@@ -160,6 +167,36 @@ public class HelpDebug
       {
         ErrorLog.add("");
         ErrorLog.add("HelpDebug.doAfterCount triggered for '%s=%,d'", which, badr.after_count);
+        ErrorLog.add("");
+        ErrorLog.flush();
+        return true;
+      }
+      else
+        return false;
+    }
+  }
+
+  public static boolean doAfterModulo(String which)
+  {
+    if (!checked)  parseParameters();
+    if (!anything) return false;
+
+    HelpRequest badr = request_map.get(which.toLowerCase());
+    if (badr == null)
+      return false;
+
+    if (badr.after_count == 0)
+      common.failure("HelpDebug specification error, need a count, as in %s=1000", which);
+
+    /* Synchronized to make sure the count runs up nicely: */
+    synchronized (request_map)
+    {
+      //common.ptod("badr.calls: " + badr.calls);
+      //common.ptod("badr.after_count: " + badr.after_count);
+      if (++badr.calls % badr.after_count == 0)
+      {
+        ErrorLog.add("");
+        ErrorLog.add("HelpDebug.doAfterModulo triggered for '%s=%,d'", which, badr.after_count);
         ErrorLog.add("");
         ErrorLog.flush();
         return true;

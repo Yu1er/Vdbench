@@ -63,7 +63,7 @@ public class common
 
   public static int DEVXLATE              = 6;
   public static int PRINT_BLOCK_COUNTERS  = 7;
-  public static int FIXED_SEED            = 8;
+  public static int FIXED_SEED            = 8;    // Sent out to Zadarastorage
   public static int REUSE_IOSTAT          = 9;
   public static int PRINT_SIZES           = 10;
   public static int FAST_HEADERS          = 11;
@@ -107,12 +107,12 @@ public class common
   public static int SMALL_FILE_COUNT      = 49;
   public static int PRINT_FS_COUNTERS     = 50;
   public static int FAKE_LIBDEV           = 51;
-
+  public static int CONCAT_ALLOW_WRITE    = 52;
   public static int NO_CONTROLFILE_DETAIL = 53;
   public static int SEQUENTIAL_COUNTS     = 54;
 
   public static int RESTART_FILLING       = 56;
-
+  public static int FORCE_SHUTDOWN        = 57;
   public static int LONG_SHUTDOWN         = 58;
   public static int ANCHOR_FIXED_SEED     = 59;
   public static int FIFO_STATS            = 60;
@@ -122,18 +122,20 @@ public class common
 
   public static int cant_use_64           = 64;   // treated as 64bit request by java!!
   public static int HOLD_UP_STATISTICS    = 65;
-  public static int LONGER_FILENAME       = 66;
+
   public static int DV_ALLOW_PATTERN      = 67;
   public static int SIMULATE              = 68;
+  public static int ASSUME_FILE_EXISTS    = 69;
   public static int SKEW_ON_CONSOLE       = 70;
   public static int DETAIL_SLV_REPORT     = 71;
   public static int GENERATE_WORK_INFO    = 72;
+  public static int USE_PSRSET            = 73;
 
   public static int USE_TVDBENCH          = 75;
   public static int USE_ANY_JAVA          = 76;
   public static int DEBUG_SPREAD          = 77;
   public static int NATIVE_SLEEP          = 78;
-  public static int USE_PSRSET            = 79;
+  public static int PRINT_SPREAD          = 79;
   public static int PTOD_WG_STUFF         = 80;
   public static int PLOG_WG_STUFF         = 81;
   public static int RUN_JMAP              = 82;
@@ -152,6 +154,7 @@ public class common
   public static int IGNORE_PARM_COMMENT   = 99;
 
   public static int USE_TMP_SHARED_LIBRARY = 100;
+  public static int OPREAD_SLEEP           = 101;
 
   public static int DONT_DUMP_MAPS         = 102;
   public static int NO_RESPONSE_TIMES      = 103;
@@ -167,11 +170,17 @@ public class common
   public static int THREAD_MONITOR_ALL     = 120;
   public static int THREAD_MONITOR_TOP10   = 121;
   public static int THREAD_MONITOR_CONSOLE = 122;  // implies top10
-  public static int FIRST_SEQ_SEEK_RANDOM  = 123;
+
   public static int FAKE_RSH               = 124;
+  public static int FAKE_TRACE_BEFORE      = 125;
+  public static int FSYNC_AFTER_WRITE      = 126;
+  public static int IGNORE_CHECKSUM        = 127;
+  public static int BYPASS_FWGWAITER       = 128;
+  public static int REPORT_FWG_PERMITS     = 129;
 
   public static int DV_PRINT_SECTOR_IMMED  = 131;
   public static int DONT_ZIP_SOCKET_MSGS   = 132;
+  public static int PRINT_FILE_IO          = 133;
 
   private static String shared_library_dir = null;   /* Directory with shared library */
   private static boolean arch_64_bit = false;
@@ -220,6 +229,7 @@ public class common
    */
   public static void failure(Exception e)
   {
+    Ctrl_c.removeShutdownHook();
     synchronized(ptod_lock)
     {
       synchronized(failure_lock)
@@ -239,6 +249,7 @@ public class common
           SlaveList.sendWorkloadDone();
           common.sleep_some(500);
           SlaveList.shutdownAllSlaves();
+          Status.printStatus("Abort requested: '%s'", e.getMessage());
         }
 
         FileAnchor.closeAllLogs();
@@ -256,7 +267,7 @@ public class common
         if (common.log_html != null)
           e.printStackTrace(common.log_html);
 
-        Ctrl_c.removeShutdownHook();
+        //Ctrl_c.removeShutdownHook();
 
         if (SlaveJvm.isFirstSlaveOnHost())
           Adm_msgs.copy_varadmmsgs();
@@ -266,8 +277,10 @@ public class common
           SlaveJvm.sendMessageToMaster(SocketMessage.SLAVE_ABORTING, e.getMessage());
 
         /* Before we go further: see if an 'end_cmd' must be run: */
-        if (!Vdbmain.simulate)
-          Debug_cmds.ending_command.run_command();
+        /* We're already in trouble: don't make it worse: */
+        /* (removed while doing 'pdm start') */
+        //if (!Vdbmain.simulate)
+        //  Debug_cmds.ending_command.run_command();
       }
 
       /* Exit must be outside of the lock: */
@@ -285,6 +298,7 @@ public class common
   }
   public static void failure(String txt)
   {
+    Ctrl_c.removeShutdownHook();
     synchronized(ptod_lock)
     {
       synchronized(failure_lock)
@@ -303,6 +317,7 @@ public class common
           SlaveList.sendWorkloadDone();
           common.sleep_some(500);
           SlaveList.shutdownAllSlaves();
+          Status.printStatus("Abort requested: %s", txt);
         }
 
         OS_cmd.killAll();
@@ -342,7 +357,7 @@ public class common
         if (common.log_html != null && common.log_html != stdout)
           t.printStackTrace(common.log_html);
 
-        Ctrl_c.removeShutdownHook();
+        //Ctrl_c.removeShutdownHook();
 
         if (SlaveJvm.isFirstSlaveOnHost())
           Adm_msgs.copy_varadmmsgs();
@@ -352,8 +367,11 @@ public class common
           SlaveJvm.sendMessageToMaster(SocketMessage.SLAVE_ABORTING, txt);
 
         /* Before we go further: see if an 'end_cmd' must be run: */
-        if (!Vdbmain.simulate)
-          Debug_cmds.ending_command.run_command();
+        /* Before we go further: see if an 'end_cmd' must be run: */
+        /* We're already in trouble: don't make it worse: */
+        /* (removed while doing 'pdm start') */
+        //if (!Vdbmain.simulate)
+        //  Debug_cmds.ending_command.run_command();
 
         /* Before we call System.exit() sleep for one second.  */
         /* This is done to allow the master to receive outstanding  */
@@ -525,7 +543,7 @@ public class common
    */
   public static void ptod(String txt)
   {
-    //if (txt.trim().length() == 0)
+    //if (txt.contains("lines"))
     //  common.where(8);
     synchronized(ptod_lock)
     {
@@ -1007,7 +1025,7 @@ public class common
       else if (arch.equals("sparc"))
         dir = "linux" + sep + "sparc32.so";
 
-      else if (arch.equals("ppc64"))       // From Jvon Barnes
+      else if (arch.startsWith("ppc64"))       // From Jvon Barnes  ppc64le from Jim M.
       {
         dir = "linux" + sep + "ppc64.so";
         arch_64_bit = true;
@@ -1078,10 +1096,7 @@ public class common
 
         common.ptod("");
         common.ptod("Loading of shared library " + shared_library + " failed.");
-        common.ptod("If the error message relates to 32 vs. 64bit processing ");
-        common.ptod("please understand that Vdbench supports 32 and 64-bit Java ");
-        common.ptod("for Solaris and Linux only at this time. ");
-        common.ptod("There also may be issues related to a cpu type not being ");
+        common.ptod("There may be issues related to a cpu type not being ");
         common.ptod("acceptable to Vdbench, e.g. MAC PPC vs. X86");
         common.ptod("Contact me at the Oracle Vdbench Forum for support.");
         common.ptod("");
@@ -1116,70 +1131,87 @@ public class common
    * Execute config.sh from the install directory eg. vdbench/solaris/
    * and also my_config.sh to prevent a reinstall from overlaying user's
    * modified contents of config.sh.
+   * (The latter is not true necause it is likely that my_config.sh gets
+   * overlaid also).
+   *
+   * 50407rc22: first look in the PARENT of the current Vdbench install for
+   * directory /vdbscripts/. If there, look for the scripts.
+   * otherwise, back to shared libray.
    */
   public static void run_config_scripts()
   {
-    long start = System.currentTimeMillis();
-    PrintWriter init = null;
-
+    /* Ignore when we find 'noconfig' or '-d18': */
+    if (Fget.file_exists(ClassPath.classPath("noconfig")))
+      return;
     if (get_debug(NO_CONFIG_SCRIPT))
       return;
 
-    /* Only run command when it exists in our own library: */
-    String command1 = common.get_shared_lib() + "config.sh";
-    String command2 = common.get_shared_lib() + "my_config.sh";
-    if (Fget.file_exists(command1) || Fget.file_exists(command2))
-    {
-      init = Report.createHmtlFile("config.html");
-      Report.chModAllReports();
-      Report.getSummaryReport().printHtmlLink("Link to config file", "config", "config");
-    }
+    long start = System.currentTimeMillis();
+    PrintWriter pw_config = null;
 
-    if (Fget.file_exists(command1))
-    {
+    /* Get the ultimate name of the two scripts, if found: */
+    String suffix = (common.onWindows()) ? ".bat" : ".sh";
+    String command1 = findscript("config" + suffix);
+    String command2 = findscript("my_config" + suffix);
 
+    /* Only create config.html if either of these two scripts exist: */
+    /* Note that we do NOT leave a message if we can't find a script. */
+    if (command1 == null && command2 == null)
+      return;
+
+
+    pw_config = Report.createHmtlFile("config.html");
+
+    /* No WHY is this one here? it gets expensive with a lot of files and slow network: */
+    //Report.chModAllReports();
+    Report.getSummaryReport().printHtmlLink("Link to config output", "config", "config");
+
+    if (command1 != null)
+    {
       /* Before we can run os_command() Native must load the shared libraries: */
       Native x = new Native();
 
       /* Run config.sh: */
       OS_cmd ocmd = new OS_cmd();
       ocmd.addText(command1);
-      ocmd.execute(false);
-      String[] stdout = ocmd.getStdout();
-      String[] stderr = ocmd.getStderr();
+      ocmd.addText("-o");
+      ocmd.addText(Vdbmain.output_dir);
+      for (String host : Host.getHostNames())
+        ocmd.addText(host);
 
-      common.ptod("config.sh command output:\n", init);
-      for (int i = 0; i < stdout.length; i++)
-        init.println("stdout: " + stdout[i]);
-      for (int i = 0; i < stderr.length; i++)
-        init.println("stderr: " + stderr[i]);
+      ocmd.execute(false);
+
+      pw_config.printf("Output from script %s: \n\n", command1);
+      for (String line : ocmd.getStderr())
+        pw_config.println("stderr: " + line);
+      for (String line : ocmd.getStdout())
+        pw_config.println(line);
+      pw_config.println();
     }
 
 
-    /* Only run command when it exists in our own library: */
-    if (Fget.file_exists(command2))
+    if (command2 != null)
     {
-
       /* Run my_config.sh: */
       OS_cmd ocmd = new OS_cmd();
       ocmd.addText(command2);
-      ocmd.execute();
-      String[] stdout = ocmd.getStdout();
-      String[] stderr = ocmd.getStderr();
-      if (stdout.length + stderr.length > 0)
-      {
-        init.println("");
-        common.ptod("my_config.sh command output:\n", init);
-      }
-      for (int i = 0; i < stdout.length; i++)
-        init.println("stdout: " + stdout[i]);
-      for (int i = 0; i < stderr.length; i++)
-        init.println("stderr: " + stderr[i]);
+      ocmd.addText("-o");
+      ocmd.addText(Vdbmain.output_dir);
+      for (String host : Host.getHostNames())
+        ocmd.addText(host);
 
+      ocmd.execute(false);
+
+      pw_config.printf("Output from script %s: \n\n", command2);
+      for (String line : ocmd.getStderr())
+        pw_config.println("stderr: " + line);
+      for (String line : ocmd.getStdout())
+        pw_config.println(line);
+      pw_config.println();
     }
 
-    if (init != null)
-      init.close();
+    if (pw_config != null)
+      pw_config.close();
 
 
     long elapsed = System.currentTimeMillis() - start;
@@ -1187,6 +1219,26 @@ public class common
       common.ptod("Running 'config.sh' took more than 5 seconds: " + elapsed + "ms.");
   }
 
+
+  /**
+   * Look for the config script first in directory /vdbscripts/ in the parent of
+   * the current vdbench install directory.
+   * After that, look for it in our own shared library.
+   */
+  public static String findscript(String script)
+  {
+    String cp     = ClassPath.classPath();
+    String parent = new File(cp).getParentFile().getAbsolutePath();
+    String dir    = parent + File.separator + "vdbscripts";
+    if (Fget.file_exists(dir, script))
+      return new File(dir, script).getAbsolutePath();
+
+    String sl = get_shared_lib();
+    if (Fget.file_exists(sl, script))
+      return new File(sl, script).getAbsolutePath();
+
+    return null;
+  }
 
   /**
    * Replace String within String.
@@ -1340,90 +1392,8 @@ public class common
 
   public static void main(String args[])
   {
-    //   long num = Long.parseLong(args[0]);
-    //   Date date = new Date(num / 1000);
-    //   common.ptod("date: " + date);
-    //
-    //   DateFormat df = new SimpleDateFormat("EEEE, MMMM dd yyyy, HH:mm:ss.SSS zzz" );
-    //   df.setTimeZone(TimeZone.getTimeZone("PST"));
-    //   common.ptod("df: " + df.format(num / 1000));
-
-    //  int key_block_size = 512;
-    //  int compare  = 4096000;
-    //
-    //  for (int i = 0; i < 37356972; i++)
-    //  {
-    //    //long lba = 2000 * 1024*1024l + i * 512;
-    //    long lba = i *  key_block_size;
-    //    int block = (int) (lba / key_block_size + i);
-    //    if (block == compare)
-    //      common.ptod("lba:   %,14d %016x %,12d %,d", lba, lba, block, i);
-    //  }
-    //
-
-    //   String[] list = new String[]
-    //   {
-    //     "0",
-    //     "1f400000",
-    //     "3e800000",
-    //     "5dc00000",
-    //     "7d000000",
-    //     "7d03c800",
-    //     "9c43c800",
-    //     "bb83c800",
-    //     "dac3c800",
-    //     "dac79000",
-    //     "fa079000",
-    //     "119479000",
-    //     "138879000",
-    //     "157c79000",
-    //     "177079000",
-    //     "3f7079000",
-    //     "416479000",
-    //     "435879000",
-    //     "454c79000",
-    //     "474079000"
-    //   };
-    //
-    //   int key_block_size = 512;
-    //   for (String str : list)
-    //   {
-    //     long lba  = Long.parseLong(str, 16);
-    //     int block = (int) (lba / key_block_size);
-    //     common.ptod("lba:   %,14d %016x %,12d ", lba, lba, block);
-    //   }
-
-
-
-    //   int key_block_size = 512;
-    //
-    //   for (int block = 0; block <  37356972; block++)
-    //   {
-    //     long lba = (long) block * (long) key_block_size;
-    //     if (block == 4096000 || block == 4096001)
-    //       common.ptod("lba: %,14d %08x %,10d ", lba, lba, block);
-    //   }
-
-    //   long value = 0x0123456789abcdefL;
-    //
-    //   byte [] bytes  = new byte[8];
-    //   for (int b = 0; b < 8; b++)
-    //   {
-    //     bytes[b] = (byte) (value >>> (56 - (b*8)));
-    //     common.ptod("bytes[b]: %02x", bytes[b]);
-    //   }
-
-    long dedup_block = 10000;
-    long relative_dedup_offset  = 77779173376l * 40;
-    int  dedup_unit = 8192;
-    int  rel_block    = (int) (dedup_block + relative_dedup_offset / dedup_unit);
-
-    common.ptod("dedup_block: %,12d          ", dedup_block);
-    common.ptod("relative_dedup_offset: %,12d", relative_dedup_offset);
-
-    common.ptod("rel_block:                  " + rel_block);
-
-
+    String fname = findscript("config.sh");
+    common.ptod("fname: " + fname);
   }
 
   public static void main1(String args[])

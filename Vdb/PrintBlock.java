@@ -11,6 +11,7 @@ package Vdb;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.TimeZone;
 import java.util.Vector;
 
 import Utils.Format;
@@ -28,25 +29,52 @@ public class PrintBlock
   private final static String c =
   "Copyright (c) 2000, 2016, Oracle and/or its affiliates. All rights reserved.";
 
-  private static DateFormat df = new SimpleDateFormat( "(MM/dd/yy HH:mm:ss.SSS)" );
+  private static DateFormat df     = new SimpleDateFormat( "(MM/dd/yyyy HH:mm:ss.SSS zzz)" );
+  private static DateFormat df_utc = new SimpleDateFormat( "(MM/dd/yyyy HH:mm:ss.SSS zzz)" );
   private static boolean zapit = false;
   private static int     zapoffset = -1;
   private static int     zapvalue  = 0x01234567;
   private static boolean quiet = true;
   private static int dedupunit = 0;
+  private static String  openflag = null;
 
+  private static OpenFlags oflags = new OpenFlags();
+
+
+  private static void usage()
+  {
+    common.ptod("");
+    common.ptod("Usage: ./vdbench print device lba xfersize [-f openflag]");
+    common.ptod("       device:   any device or file");
+    common.ptod("       lba:      logical byte address. ");
+    common.ptod("                 May be prefixed with 0x if this is hexadecimal. ");
+    common.ptod("                 You may also specify k or m for kilobytes or megabytes.");
+    common.ptod("                 lba must be multiple of 512 bytes, but will be truncated if not.");
+    common.ptod("       length:   Number of bytes to print.");
+    common.ptod("       -f:       'open flag' One open flag, e.g. 'directio', see Vdbench doc under 'openflags='");
+    common.ptod("");
+  }
+
+
+  /**
+   * This is called from Vdbmain.
+   */
   public static void print(String[] args)
   {
     /* Replace "-print" with "print" to avoid parse errors: */
     args[0] = "print";
 
-    Getopt g = new Getopt(args, "u:qzo:v:", 99);
+    Getopt g = new Getopt(args, "u:qzo:v:f:h", 99);
     Vector positionals = g.get_positionals();
 
     if (positionals.size() != 4)
-      if (args.length < 4)
-        common.failure("Bad print option: 'print device lba size'. "+
-                       "(lba may be prefixed with 0x if needed)");
+    {
+      //if (args.length < 4)
+      {
+        usage();
+        common.failure("Bad syntax");
+      }
+    }
 
       /* Need shared memory to issue PTOD() requests in JNI: */
     Native.allocSharedMemory();
@@ -60,6 +88,12 @@ public class PrintBlock
       zapvalue = (int) Long.parseLong(g.get_string(), 16);
     if (g.check('u'))
       dedupunit = g.extractInt();
+    if (g.check('f'))
+    {
+      oflags = new OpenFlags(new String[] { g.get_string()}, null);
+      BoxPrint.printOne("Opening input file/disk using open() flag '%s'", g.get_string());
+    }
+
 
     String disk         = g.get_positional(1);
     String lba_string   = g.get_positional(2);
@@ -79,9 +113,13 @@ public class PrintBlock
       lba = Long.parseLong(lba_string);
 
     /* Allow specification of non-512 aligned block by just clearing the remainder: */
-    lba &= ~511;
+    if (lba % 512 != 0)
+    {
+      long old_lba = lba;
+      lba &= ~511;
+      common.ptod("lba truncated from 0x%08x to 0x%08x (must be multiple of 512)", old_lba, lba);
+    }
 
-    System.out.println(String.format("Device: %s; lba: 0x%08x", disk, lba));
 
     /* Make size multiple of 512, but use original size for printing: */
     if (print_string.endsWith("k"))
@@ -91,6 +129,8 @@ public class PrintBlock
     else
       print_size = Integer.parseInt(print_string);
     int read_size  = (print_size + 511) / 512 * 512;
+
+    System.out.println(String.format("Device: %s; lba: 0x%08x length: %d", disk, lba, print_size));
 
     Vector lines = printit(disk, lba, read_size, print_size);
     for (int i = 0; i < lines.size(); i++)
@@ -107,7 +147,11 @@ public class PrintBlock
     /* Allocate workarea for LFSR: */
     int[] lfsr_sector  = new int[512/4];
 
-    OpenFlags oflags = new OpenFlags(new String[] { "directio"}, null);
+    //OpenFlags oflags;
+    //if (lun.startsWith("/dev/"))
+    //  oflags = new OpenFlags();
+    //else
+    //  oflags = new OpenFlags(new String[] { "directio" }, null);
 
     long handle = Native.openFile(lun, oflags, 0);
     if (handle < 0)
@@ -152,11 +196,15 @@ public class PrintBlock
 
       /* Report the timestamp from this block: */
       String todstr;
+      String todstr_utc;
       String wrong = "";
       int ts0 = data_sector[sector_offset + 2];
       int ts1 = data_sector[sector_offset + 3];
       long ts = Jnl_entry.make64(ts0, ts1); // ((long) ts0 << 32) | ((long) ts1 << 32 >>> 32);
-      todstr  = df.format( new Date(ts / 1000) );
+      todstr      = df.format( new Date(ts) );
+      df_utc.setTimeZone(TimeZone.getTimeZone("UTC"));
+      todstr_utc  = df_utc.format( new Date(ts) );
+      long checksum = calc_checksum(ts);
 
 
       /* Check lba: */
@@ -250,6 +298,14 @@ public class PrintBlock
             line += " unique";
           else
             line += " duplicate";
+        }
+
+        /* If the checksum in the sector matches the checksum of the timestamp */
+        /* then this is very likely a DV header: */
+        if (sector_offset + 4 < data_sector.length)
+        {
+        if (checksum == ((data_sector[sector_offset + 4] >> 16)  & 0xff))
+          line += todstr + " " + todstr_utc;
         }
 
         lines.add(line);
@@ -350,6 +406,26 @@ public class PrintBlock
 
     return txt.toString();
   }
+
+
+  private static long calc_checksum(long write_time)
+  {
+    long checksum = 0;
+    checksum += write_time;
+    checksum += (write_time >>  8);
+    checksum += (write_time >> 16);
+    checksum += (write_time >> 24);
+    checksum += (write_time >> 32);
+    checksum += (write_time >> 40);
+    checksum += (write_time >> 48);
+    checksum += (write_time >> 56);
+    checksum &= 0xff;
+
+    //common.ptod("checksum: %02x %016x", checksum, write_time);
+
+    return checksum;
+  }
+
 
   public static void main(String[] args)
   {

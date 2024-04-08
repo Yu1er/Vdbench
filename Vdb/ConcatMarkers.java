@@ -122,6 +122,8 @@ public class ConcatMarkers
         continue;
       if (!sd.sd_is_referenced)
         continue;
+      if (common.get_debug(common.CONCAT_ALLOW_WRITE))
+        sd.setOpenForWrite();
       if (!sd.open_for_write)
         error("ConcatMarkers: Writing of markers for sd=%s can not be done for read-only workloads.",
               sd.sd_name);

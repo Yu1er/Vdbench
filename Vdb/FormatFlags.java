@@ -130,6 +130,16 @@ public class FormatFlags implements Serializable, Cloneable
 
     if (format_requested && Validate.isJournalRecovery())
       common.failure("'format=yes' and Journal recovery are mutually exclusive");
+
+    /* A format implies these operations, so we need the columns: */
+    if (format_requested)
+    {
+      Operations.getOperationIdentifier("rmdir");
+      Operations.getOperationIdentifier("mkdir");
+      Operations.getOperationIdentifier("delete");
+      Operations.getOperationIdentifier("create");
+      Operations.getOperationIdentifier("write");
+    }
   }
 
   public String toString()

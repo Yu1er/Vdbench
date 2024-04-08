@@ -1,7 +1,7 @@
 package Vdb;
 
 /*
- * Copyright (c) 2000, 2016, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2000, 2017, Oracle and/or its affiliates. All rights reserved.
  */
 
 /*
@@ -27,7 +27,7 @@ import Utils.Semaphore;
 public class Vdbmain
 {
   private final static String c =
-  "Copyright (c) 2000, 2016, Oracle and/or its affiliates. All rights reserved.";
+  "Copyright (c) 2000, 2018, Oracle and/or its affiliates. All rights reserved.";
 
   static Vector <SD_entry> sd_list  = new Vector(64, 0); /* List of Storage Definitions  */
   static Vector <SD_entry> csd_list = new Vector(8);
@@ -40,6 +40,7 @@ public class Vdbmain
   static boolean fwd_workload = false;
 
   static boolean simulate       = false;
+  static String  pdm_output     = null;
   static String  output_dir     = "output";
   static PrintWriter parms_report;
 
@@ -69,9 +70,9 @@ public class Vdbmain
 
   private static Vector parm_files;
 
+  public static volatile boolean vdbench_ended = false;
 
   static boolean kstat_console = false;
-
 
   /* Unique run time value to make sure we don't fiddle with */
   /* old masters and slaves                                  */
@@ -242,10 +243,16 @@ public class Vdbmain
         simulate = true;
     }
 
-    checkJavaVersion();
+    // Removed as per 50407 because of java 1.10.x
+    //checkJavaVersion();
+
+    /* PDM may have overridden the output directory name: */
+    if (pdm_output != null)
+      output_dir = pdm_output;
 
     /* Create requested directory. Delete files inside if it already exists: */
     output_dir      = reporting.rep_mkdir(output_dir);
+    PdmStart.setOutputDir(output_dir);
     Validate.setOutput(output_dir);
     common.log_html = Report.createHmtlFile("logfile");
     Report.setLogReport(new Report(common.log_html, "logfile", "common.log_html"));
@@ -254,7 +261,11 @@ public class Vdbmain
     /* Open summary file as early as possible: */
     String txt = c + "\nVdbench summary report, created ";
     SimpleDateFormat df = new SimpleDateFormat("HH:mm:ss MMM dd yyyy zzz"  );
-    common.summ_html = Report.createHmtlFile("summary.html", txt + df.format(new Date()));
+    SimpleDateFormat df2 = new SimpleDateFormat("HH:mm:ss MMM dd yyyy zzz"  );
+    df2.setTimeZone(TimeZone.getTimeZone("UTC"));
+    common.summ_html = Report.createHmtlFile("summary.html",
+                                             txt + df.format(new Date()) +
+                                             " (" + df2.format(new Date()) + ")");
 
     Report.setSummaryReport(new Report(common.summ_html, "summary", "common.summ_html"));
     Report.getSummaryReport().printHtmlLink("Link to logfile", "logfile", "logfile");
@@ -421,6 +432,10 @@ public class Vdbmain
       else if (thisarg.compareTo("-") == 0)
         Vdb_scan.xlate_command_line(args, i);
 
+      else if (thisarg.startsWith("-r"))
+        RD_entry.parseRestart(thisarg.substring(2));
+
+
       else
       {
         common.ptod("");
@@ -519,6 +534,10 @@ public class Vdbmain
    */
   public static void main(String args[])
   {
+    /* if ONLY '-o' is specified, return NEXT output dir: */
+    if (onlyOutput(args))
+      return;
+
     String[] original_args = args;
     String next;
 
@@ -552,7 +571,7 @@ public class Vdbmain
 
       /* Start interceptor: */
       Ctrl_c.activateShutdownHook();
-      Shutdown.activateShutdownHook();
+      //Shutdown.activateShutdownHook();
 
       common.stdout = new PrintWriter(System.out, true);
 
@@ -563,6 +582,7 @@ public class Vdbmain
 
 
       /* Get execution parameters:   */
+      pdm_output = PdmStart.lookForOutputDir(args);
       check_args(args);
       RshDeamon.readPortNumbers();
 
@@ -573,6 +593,8 @@ public class Vdbmain
                                               "parmfile", "parmfile");
       Report.getSummaryReport().printHtmlLink("Copy of parameter scan detail",
                                               "parmscan", "parmscan");
+      /* Just in case we die very early: */
+      Report.flushAllReports();
 
       Vdb_scan.Vdb_scan_read(parm_files, true);
       parseParameterLines();
@@ -590,6 +612,9 @@ public class Vdbmain
       /* Check some RD stuff that still needs to be done: */
       RD_entry.parserCleanup(rd_list);
 
+      /* If any PDM info has been passed, use it now: */
+      PdmStart.setup();
+
       /* Activate DV for dedup: */
       if (Dedup.isDedup())
         Validate.setValidateOptionsForDedup();
@@ -597,24 +622,29 @@ public class Vdbmain
       Flat.createFlatFile();
       Flat.define_column_headers();
 
-
+      /* This really starts everything: */
       masterRun();
 
-      if (!Vdbmain.simulate)
-      {
-        /* This String may not change!! */
-        common.ptod("Vdbench execution completed successfully. Output directory: %s \n", output_dir);
-        common.ptod("Vdbench execution completed successfully", common.summ_html);
-      }
-      else
+      if (Vdbmain.simulate)
       {
         RD_entry.displaySimulatedRuns();
         common.ptod("Vdbench simulation completed successfully. Output directory: %s \n", output_dir);
         common.ptod("Vdbench simulation completed successfully", common.summ_html);
       }
 
-
-      Status.printStatus("Vdbench complete", null);
+      else if (reporter.monitor_kill)
+      {
+        common.ptod("Vdbench execution killed by user. Output directory: %s \n", output_dir);
+        common.ptod("Vdbench execution killed by user", common.summ_html);
+        Status.printStatus("Vdbench killed");
+      }
+      else
+      {
+        /* This String may not change!! */
+        common.ptod("Vdbench execution completed successfully. Output directory: %s \n", output_dir);
+        common.ptod("Vdbench execution completed successfully", common.summ_html);
+        Status.printStatus("Vdbench complete");
+      }
 
       /* Stop Adm message scan: */
       Adm_msgs.terminate();
@@ -623,6 +653,8 @@ public class Vdbmain
       Tnfe_data.close();
 
       Host.closeAdmMessagesFiles();
+
+      vdbench_ended = true;
     }
 
 
@@ -723,6 +755,7 @@ public class Vdbmain
 
 
 
+  public static Reporter reporter = null;
   private static void masterRun()
   {
     /* Using the host names and the requested JVM counts, create a list of
@@ -813,14 +846,8 @@ public class Vdbmain
     /* Find out which hosts can report their cpu usage: */
     InfoFromHost.checkCpuReporting();
 
-    /* Run config file, except when we have a 'noconfig' file: */
-    if (!common.onWindows())
-    {
-      if (!new File(ClassPath.classPath("noconfig")).exists())
-        common.run_config_scripts();
-      else
-        common.plog("Bypassing 'config.sh'");
-    }
+    /* Run config script: */
+    common.run_config_scripts();
 
     if (ReplayInfo.isReplay())
       ReplayRun.setupTraceRun();
@@ -836,7 +863,7 @@ public class Vdbmain
 
 
     /* Reporter takes care of the whole Vdbench execution: */
-    Reporter reporter = new Reporter();
+    reporter = new Reporter();
     CollectSlaveStats css = new CollectSlaveStats(reporter);
     reporter.start();
     css.start();
@@ -848,6 +875,8 @@ public class Vdbmain
       SlaveList.shutdownAllSlaves();
     ThreadControl.shutdownAll("Vdb.HeartBeat");
     SlaveList.waitForAllSlavesShutdown();
+
+
   }
 
 
@@ -1014,6 +1043,10 @@ public class Vdbmain
       else if (args[0].equalsIgnoreCase("printjournal"))
         PrintJournal.main(nargs);
 
+      /* Vdbench kill? */
+      else if (args[0].equalsIgnoreCase("kill"))
+        VdbenchKill.main(nargs);
+
       else
         return false;
 
@@ -1172,5 +1205,22 @@ public class Vdbmain
 
     loop_duration = Long.parseLong(number) * multiplier;
     loop_duration *= 1000;
+  }
+
+
+  /**
+   * if ONLY '-o' is specified, return NEXT output dir
+   * e.g.  vdbench -o output
+   */
+  private static boolean onlyOutput(String[] args)
+  {
+     if (args.length != 2)
+       return false;
+     if (!args[0].equals("-o"))
+       return false;
+
+     String output = reporting.rep_mkdir(args[1]);
+     System.out.println(output);
+     return true;
   }
 }

@@ -15,6 +15,7 @@ import Utils.ClassPath;
 import Utils.Format;
 import Utils.printf;
 
+
 /**
  * This class stores entered Run Definition (RD) parameters
  */
@@ -135,6 +136,10 @@ public class RD_entry implements Serializable, Cloneable
   private HashMap <String, ArrayList <StreamContext> > threads_per_slave_map = null;
 
 
+  public static int IOS_PER_JVM  = 100000;
+  public static int DEFAULT_JVMS = 8;
+
+  public static boolean fwd_thread_adjust = true;
 
   public static String FSD_FORMAT_RUN = "format_for_";
 
@@ -279,9 +284,7 @@ public class RD_entry implements Serializable, Cloneable
       next_rd = null;
 
     else
-    {
       next_rd = (RD_entry) Vdbmain.rd_list.elementAt(workload_index++);
-    }
 
     return next_rd;
   }
@@ -289,11 +292,20 @@ public class RD_entry implements Serializable, Cloneable
 
   public static void displaySimulatedRuns()
   {
+    long count = 0;
+    long total_elapsed = 0;
     for (int i = 0; i < Vdbmain.rd_list.size(); i++)
     {
       RD_entry rd = (RD_entry) Vdbmain.rd_list.elementAt(i);
       rd.display_run();
+      if (rd.getElapsed() != NO_ELAPSED)
+        total_elapsed += rd.getElapsed();
+      total_elapsed += rd.getWarmup();
+      count ++;
     }
+    common.ptod("Total amount of Run Definitions: %d; total elapsed time %d "+
+                "seconds, or %.4f hours, plus a format if requested.",
+                count, total_elapsed, total_elapsed / 3600.);
   }
 
   /**
@@ -309,7 +321,8 @@ public class RD_entry implements Serializable, Cloneable
       overrides = current_override.getText();
 
 
-    Status.printStatus("Starting", this);
+    Status.clear();
+    Status.printRdStatus("Starting");
 
     String elapsed_txt;
     if (getElapsed() == NO_ELAPSED)
@@ -368,7 +381,10 @@ public class RD_entry implements Serializable, Cloneable
 
 
     if (Vdbmain.isWdWorkload() && !Vdbmain.simulate)
-      rd_report_parameters_on_flatfile();
+      Flat.reportWgParameters(this);
+    if (Vdbmain.isFwdWorkload() && !Vdbmain.simulate)
+      Flat.reportFwgParameters(this);
+
 
     if (Vdbmain.simulate)
       common.pboth(txt);
@@ -461,13 +477,15 @@ public class RD_entry implements Serializable, Cloneable
 
         else if (prm.keyword.equals("fsd"))
         {
-          if (Host.getHostNames().length > 1)
-            common.ptod("Warning: rd=xx,fsd=yyy parameter does not work with multi-host. TBD");
+          //if (Host.getHostNames().length > 1)
+          //  common.ptod("Warning: rd=%s,fsd=yyy parameter does not work with multi-host. TBD", rd.rd_name);
           rd.fsd_names = prm.alphas;
         }
 
         else if ("iorate".startsWith(prm.keyword))
         {
+          if (Vdbmain.isFwdWorkload())
+            common.failure("Specifying 'iorate=' for a File System workload. Use 'fwdrate=' instead.");
           if (prm.getAlphaCount() == 1 && prm.alphas[0].compareTo("curve") == 0)
           {
             //if (!Report.sdDetailNeeded())
@@ -553,6 +571,9 @@ public class RD_entry implements Serializable, Cloneable
 
         else if ("fwdrate".startsWith(prm.keyword))
         {
+          if (Vdbmain.isWdWorkload())
+            common.failure("Specifying 'fwdrate=' for a raw workload. Use 'iorate=' instead.");
+
           if (prm.getAlphaCount() == 1 && prm.alphas[0].compareTo("curve") == 0)
           {
             rd.fwd_rate = RD_entry.CURVE_RATE;
@@ -890,78 +911,6 @@ public class RD_entry implements Serializable, Cloneable
 
   }
 
-  /**
-   * Report on the flatfile those parameters that are identical in each workload
-   */
-  public void rd_report_parameters_on_flatfile()
-  {
-    ArrayList <WG_entry> wg_list = getAllWorkloads();
-    WG_entry wg     = wg_list.get(0);
-    int    xfersize = (wg.getXfersizes().length > 0) ? (int) wg.getXfersizes()[0] : 0;
-    double rhpct    = wg.rhpct;
-    double whpct    = wg.whpct;
-    double readpct  = wg.readpct;
-    double seekpct  = wg.seekpct;
-
-    for (int i = 1; i < wg_list.size(); i++)
-    {
-      wg = wg_list.get(i);
-      if (wg.getXfersizes().length > 0 && xfersize != wg.getXfersizes()[0])
-        xfersize = -1;
-      if (rhpct != wg.rhpct)
-        rhpct = -1;
-      if (whpct != wg.whpct)
-        whpct = -1;
-      if (readpct != wg.readpct)
-        readpct = -1;
-      if (seekpct != wg.seekpct)
-        seekpct = -1;
-    }
-
-    Flat.put_col("xfersize");
-    Flat.put_col("rhpct");
-    Flat.put_col("whpct");
-    Flat.put_col("rdpct");
-    Flat.put_col("threads");
-    Flat.put_col("seekpct");
-
-    if (xfersize != -1)
-      Flat.put_col("xfersize", xfersize);
-    if (rhpct != -1)
-      Flat.put_col("rhpct", rhpct);
-    if (whpct != -1)
-      Flat.put_col("whpct", whpct);
-    if (readpct != -1)
-      Flat.put_col("rdpct", readpct);
-    if (seekpct != -1)
-      Flat.put_col("seekpct", seekpct);
-
-    /* Keep track of #threads in SD parameter. If they're all the same, report */
-    /* that count, otherwise report -1: */
-    long threads_in_sds = 0;
-
-    long lunsize = 0;
-    for (int i = 0; i < Vdbmain.sd_list.size(); i++)
-    {
-      SD_entry sd = (SD_entry) Vdbmain.sd_list.elementAt(i);
-      if (sd.isActive())
-      {
-        if (threads_in_sds == 0)
-          threads_in_sds = sd.threads;
-        if (threads_in_sds != sd.threads)
-          threads_in_sds = -1;
-
-        lunsize += sd.end_lba;
-      }
-    }
-
-    if (current_override.getThreads() != For_loop.NOVALUE)
-      Flat.put_col("threads", current_override.getThreads());
-    else
-      Flat.put_col("threads", threads_in_sds);
-    Flat.put_col("lunsize", (double) lunsize / Report.GB);
-  }
-
 
   /**
    * Create a list of the WDs needed for this RD.
@@ -1118,16 +1067,15 @@ public class RD_entry implements Serializable, Cloneable
       }
 
 
-      /* We won't use waiter if we have no WD's defined: */
-      // This should be an error?
+      /* We may not need waiter if we have no WD's defined: */
       if (wds_for_rd.size() == 0)
       {
-        use_waiter = false;
+        use_waiter = (iorate_req != MAX_RATE && iorate_req != CURVE_RATE);
         rc = 2;
         break;
       }
-      /* Format of new files. We keep the iorate to 5000 to avoid having to */
-      /* increase the JVM count, but still want max iops: */
+
+      /* Format of new files: */
       if (rd_name.startsWith(SD_entry.SD_FORMAT_NAME))
       {
         use_waiter = false;
@@ -1136,10 +1084,8 @@ public class RD_entry implements Serializable, Cloneable
       }
 
       /* If any skew is defined we may not run an uncontrolled workload: */
-      for (int i = 0; i < wds_for_rd.size(); i++ )
+      for (WD_entry wd : wds_for_rd)
       {
-        WD_entry wd = (WD_entry) wds_for_rd.elementAt(i);
-
         /* If any skew or iorate or priority was requested we must use the waiter: */
         if (wd.skew_original != 0 || wd.wd_iorate != 0 || wd.priority != Integer.MAX_VALUE)
         {
@@ -1159,7 +1105,6 @@ public class RD_entry implements Serializable, Cloneable
 
       if (rc == 0)
       {
-        //use_waiter = (next_rd.iorate_req != MAX_RATE && next_rd.iorate_req != CURVE_RATE);
         use_waiter = (iorate_req != MAX_RATE && iorate_req != CURVE_RATE);
         rc = 6;
       }
@@ -1324,12 +1269,12 @@ public class RD_entry implements Serializable, Cloneable
     FwdEntry[] fwds = (FwdEntry[]) map.keySet().toArray(new FwdEntry[0]);
     for (int i = 0; i < fwds.length; i++)
     {
-      int count = map.get(fwds[i]).intValue();
+      int count             = map.get(fwds[i]).intValue();
       int threads_requested = fwds[i].threads;
       if (current_override != null && current_override.getThreads() != For_loop.NOVALUE)
         threads_requested = (int) current_override.getThreads();
       //common.ptod("count: " + count + " " + fwds[i].threads);
-      if (count != threads_requested)
+      if (count != threads_requested && !fwds[i].fwd_name.equals("default"))
       {
         common.ptod("");
         common.ptod("Note: fwd=%s,threads=%d,...", fwds[i].fwd_name, threads_requested);
@@ -1346,6 +1291,11 @@ public class RD_entry implements Serializable, Cloneable
           common.ptod("      slave or host, or integer truncation of the resulting thread count.");
           common.ptod("      Contact the author of Vdbench if there are unexplained differences.");
           common.ptod("");
+          common.ptod("      Use general parameter 'fwd_thread_adjust=no' to cause Vdbench to abort instead. ");
+          common.ptod("");
+
+          if (!fwd_thread_adjust)
+            common.failure("User requested 'fwd_thread_adjust=no'");
         }
       }
 
@@ -1704,6 +1654,10 @@ public class RD_entry implements Serializable, Cloneable
     /* report the expected anchor information: */
     FileAnchor.reportCalculatedMemorySizes(new_list);
 
+    /* Remove RDs we don't want: */
+    if (restart_rd != null)
+      keepRestart(new_list);
+
     return new_list;
   }
 
@@ -1718,7 +1672,7 @@ public class RD_entry implements Serializable, Cloneable
   public static Vector buildNewRdListForWd()
   {
     RD_entry rd;
-    Vector new_list = new Vector(16, 0);
+    Vector <RD_entry> new_list = new Vector(16, 0);
 
     /* Start 'next workload search' at the beginning: */
     RD_entry.next_rd = null;
@@ -1747,9 +1701,37 @@ public class RD_entry implements Serializable, Cloneable
         new_rd.insertCurveRuns(new_list, false);
     }
 
+    /* Remove RDs we don't want: */
+    if (restart_rd != null)
+      keepRestart(new_list);
+
     return new_list;
   }
 
+  /**
+   * The '-r rdname' parameter:
+   * Removes ALL RDs found before this RD.
+   */
+  private static void keepRestart(Vector <RD_entry> new_list)
+  {
+    for (int i = 0; i < new_list.size(); i++)
+    {
+      RD_entry rd = new_list.get(i);
+      if (rd.rd_name.startsWith(SD_entry.SD_FORMAT_NAME))
+        common.failure("Skipping rd=%s during restart is not allowed.", rd.rd_name);
+
+      else if (rd.rd_name.startsWith(FSD_FORMAT_RUN))
+        common.failure("Skipping rd=%s during restart is not allowed.", rd.rd_name);
+
+      if (rd.rd_name.startsWith(restart_rd))
+        break;
+      new_list.set(i, null);
+    }
+
+    while (new_list.remove(null));
+    if (new_list.size() == 0)
+      common.failure("Restart rd=%s not found", restart_rd);
+  }
 
 
   public static void finalizeWgEntries()
@@ -1837,6 +1819,7 @@ public class RD_entry implements Serializable, Cloneable
    */
   public static void createWgListForOneRd(RD_entry rd, boolean last_pass)
   {
+
     /* Clear all information about work for this RD that may go to a host or slave: */
     for (Host host : Host.getDefinedHosts())
     {
@@ -1856,6 +1839,11 @@ public class RD_entry implements Serializable, Cloneable
     /* We create a list of work for each WD_entry: */
     for (WD_entry wd : rd.wds_for_rd)
     {
+      /* Setup info for properly assigning skewed workloads: */
+      rd.prev_wd        = null;
+      wd.starting_slave = 0;
+
+
       /* Just a generic warning: */
       if (last_pass                  &&
           Validate.sdConcatenation() &&
@@ -1906,19 +1894,22 @@ public class RD_entry implements Serializable, Cloneable
 
           /* Data Validation for an SD may run on only ONE slave.    */
           /* If one has this workload already, add it to that slave: */
-          Slave slave = findWorkForSd(sd);
-          if (Validate.isRealValidate() && slave != null)
+          if (Validate.isRealValidate())
           {
-            rd.giveWorkloadToSlave(wg, slave);
-            printWgInfo("Data Validation Work for wd=%s,sd=%s given to slave=%s",
-                        wd.wd_name, sd.sd_name, slave.getLabel());
-            continue;
+            Slave slave = findWorkForSd(sd);
+            if (slave != null)
+            {
+              rd.giveWorkloadToSlave(wg, slave);
+              printWgInfo("Data Validation Work for wd=%s,sd=%s given to slave=%s",
+                          wd.wd_name, sd.sd_name, slave.getLabel());
+              continue;
+            }
           }
 
 
           /* Some workloads may run on only one slave.      */
           /* If one has this workload already, just ignore. */
-          if (WhereWhatWork.mustRunOnSingleSlave(wd) && findWorkForWdSdCombo(wd, sd) != null)
+          if (WhereWhatWork.mustRunOnSingleSlave(wd, wg) && findWorkForWdSdCombo(wd, sd) != null)
           {
             printWgInfo("Work not given to host=%s due to mustRunOnSingleSlave: wd=%s,sd=%s",
                         current_host.getLabel(),
@@ -1931,7 +1922,7 @@ public class RD_entry implements Serializable, Cloneable
 
 
           /* Add this WG_entry to the current host: */
-          rd.giveWorkloadToSlaves(wg, current_host);
+          rd.giveWorkloadToSlaves(wg, current_host, last_pass);
 
 
 
@@ -1946,7 +1937,6 @@ public class RD_entry implements Serializable, Cloneable
 
 
     /* Now give those workloads to the proper slaves: */
-    //rd.removeUnwantedWorkloads();
     rd.checkWdUsed();
 
 
@@ -2004,8 +1994,10 @@ public class RD_entry implements Serializable, Cloneable
    *
    * Data Validation MUST stay on the same slave.
    */
-  private void giveWorkloadToSlaves(WG_entry wg, Host host)
+  private void giveWorkloadToSlaves(WG_entry wg, Host host, boolean last_pass)
   {
+    willWeUseWaiterForWG();
+
     /* Data Validation must keep an SD (not only the workload) on the same slave: */
     /* ('slave_used_for_dv' is set when work is actually SENT to the slave)       */
     if (Validate.isValidate() && wg.sd_used.slave_used_for_dv != null)
@@ -2017,9 +2009,15 @@ public class RD_entry implements Serializable, Cloneable
     }
 
     /* 100% sequential, replay, etc must be on one slave: */
-    else if (WhereWhatWork.mustRunOnSingleSlave(wg.wd_used))
+    else if (WhereWhatWork.mustRunOnSingleSlave(wg.wd_used, wg))
     {
-      Slave slave = host.getLeastBusySlave();
+      /* Give the workload to the slave that has already received this SD, */
+      /* or send it to the least busy slave:                               */
+      Slave slave = null;
+      if (use_waiter)
+        slave = host.getSlaveUsingSd(wg.sd_used);
+      if (slave == null)
+        slave = host.getLeastBusySlave();
       giveWorkloadToSlave(wg, slave);
       printWgInfo("giveWorkloadToSlaves3 added wd=%s,sd=%s to slave=%s",
                   wg.wd_used.wd_name, wg.sd_used.sd_name, slave.getLabel());
@@ -2027,14 +2025,27 @@ public class RD_entry implements Serializable, Cloneable
 
     else
     {
-      /* The rest may be spread over all slaves on this host:       */
-      /* Though spreadSdThreadsAcrossSlaves() may remove it again.  */
-      for (Slave slave : host.getSlaves())
+      if (anySkewRequested())
       {
-        WG_entry wg_clone = (WG_entry) wg.clone();
-        giveWorkloadToSlave(wg_clone, slave);
-        printWgInfo("giveWorkloadToSlaves4 added wd=%s,sd=%s to slave=%s",
-                    wg.wd_used.wd_name, wg.sd_used.sd_name, slave.getLabel());
+        /* This thread count should be adjusted to be 'per host'             */
+        /* However, even if the code here adds workloads to too many slaves, */
+        /* later on in spreadSdThreads() that will be corrected again.       */
+        /* Let's see if this statements holds true.                          */
+        int threads_requested = getThreadsFromSdOrRd(wg.sd_used);
+        sendSkewedWorkloadToSlaves(wg, host, threads_requested, last_pass);
+      }
+
+      else
+      {
+        /* The rest may be spread over all slaves on this host:       */
+        /* Though spreadSdThreadsAcrossSlaves() may remove it again.  */
+        for (Slave slave : host.getSlaves())
+        {
+          WG_entry wg_clone = (WG_entry) wg.clone();
+          giveWorkloadToSlave(wg_clone, slave);
+          printWgInfo("giveWorkloadToSlaves4 added wd=%s,sd=%s to slave=%s",
+                      wg.wd_used.wd_name, wg.sd_used.sd_name, slave.getLabel());
+        }
       }
     }
   }
@@ -2046,6 +2057,61 @@ public class RD_entry implements Serializable, Cloneable
     slave.addWorkload(wg, this);
   }
 
+
+  /**
+   * This code makes sure that skewed workloads end up on the right slave so
+   * that those workloads are allowed to compete with each other.
+   * For instance: if wd1 of a skewed workload runs on slave0, wd2 must run
+   * there too. If they are not on the same slave each of those workloads will
+   * run as fast as possible, ignoring the requested workload skew.
+   */
+  private WD_entry prev_wd = null;
+  private void sendSkewedWorkloadToSlaves(WG_entry wg,
+                                          Host     host,
+                                          int      host_threads,
+                                          boolean  last_pass)
+  {
+    Vector <Slave> slaves = host.getSlaves();
+    WD_entry       wd     = wg.wd_used;
+
+    if (wd == prev_wd)
+    {
+      /* The workload for this SD is sent to the same slaves used for the */
+      /* previous workload, but make sure that we have enough threads for that: */
+      for (int i = 0; i < host_threads && i < slaves.size(); i++)
+      {
+        Slave slave = slaves.get((wd.starting_slave + wd.sds_added + i) % slaves.size());
+        giveWorkloadToSlave((WG_entry) wg.clone(), slave);
+      }
+      wd.sds_added++;
+    }
+
+    else
+    {
+      if (prev_wd == null)
+      {
+        wd.starting_slave = 0;
+        wd.sds_added = 0;
+      }
+      else
+      {
+        wd.starting_slave = prev_wd.starting_slave + 1;
+        wd.sds_added = 0;
+      }
+
+      for (int i = 0; i < host_threads && i < slaves.size(); i++)
+      {
+        Slave slave = slaves.get((wd.starting_slave + wd.sds_added + i) % slaves.size());
+        giveWorkloadToSlave((WG_entry) wg.clone(), slave);
+      }
+      wd.sds_added++;
+
+      prev_wd = wd;
+    }
+
+
+    reportSpread(true, "%-5b After sendSkewedWorkloadToSlaves()", last_pass);
+  }
 
   private void testPrint()
   {
@@ -2072,125 +2138,6 @@ public class RD_entry implements Serializable, Cloneable
     common.ptod("");
 
   }
-
-
-
-  /**
-   * Remove from all hosts those workloads that should not run there, e.g.
-   * 100% sequential workloads and replay workloads.
-   *
-   * Those workloads have been added to the host earlier regardless of its
-   * status so that, at this time, we know how much work we have on each host,
-   * and can remove the unwanted workloads from the BUSIEST hosts.
-   * If we would have attempted to make this decision before we had a total work
-   * count we may have ended up with too much work for a host.
-   *
-   * Note that if this mechanism is not acceptable for some reason, the user can
-   * always hardcode host names in the parameter file to whatever workload he
-   * wants to run where.
-   */
-  private void obsolete_removeUnwantedWorkloads()
-  {
-    int count = 0;
-    int loop = 0;
-
-    toploop:
-    while (true)
-    {
-      //testPrint();
-      HashMap <String, WD_entry> seq_wd_map = new HashMap(8);
-
-      for (Host host : Host.getDefinedHosts())
-      {
-        if (loop++ > 10000)
-          common.failure("loop protection");
-
-        /* Get SDs for this host: */
-        SD_entry[] sds = host.getSds();
-
-        for (SD_entry sd : sds)
-        {
-          /* Get WGs for this SD: */
-          ArrayList <WG_entry> wgs_for_sd_on_host = host.getWgsForSd(sd);
-          for (WG_entry wg : wgs_for_sd_on_host)
-          {
-            //boolean sequential   = (wg.wd_used.seekpct <= 0 || ReplayInfo.isReplay());
-            boolean single_slave = WhereWhatWork.mustRunOnSingleSlave(wg.wd_used);
-
-            //common.ptod("adding dup?: sd=%s key=%s host=%s %s",
-            //            sd.sd_name, sd.sd_name + wg.wd_used.wd_name, host.getLabel(), sd.sd_name + wg.wd_used.wd_name);
-
-            if (false)
-            //if (single_slave && seq_wd_map.put(sd.sd_name + wg.wd_used.wd_name, wg.wd_used) != null)
-            {
-              /* We have a duplicate sequential workload. */
-              /* Remove this workload from the host with the most work: */
-              //common.ptod("duplicate: sd=%s", sd.sd_name);
-
-              int max_work = 0;
-              Host busiest = null;
-              for (Host h2 : Host.getDefinedHosts())
-              {
-                SD_entry[] sds2 = h2.getSds();
-
-                /* If equal, the LAST ('>=') will be used: */
-                if (sds2.length >= max_work)
-                {
-                  busiest  = h2;
-                  max_work = sds2.length;
-                }
-              }
-
-              //common.ptod("Busiest host=%s %d", busiest.getLabel(), max_work);
-              //if (max_work == 1)
-              //  common.failure("max should never be one");
-
-
-              //common.ptod("removing dup?: sd=%s wd=%s host=%s", sd.sd_name, wg.wd_name, busiest.getLabel());
-              int removes = busiest.removeWorkload(wg);
-              if (removes == 0)
-                common.failure("unable to remove slave=%s,wg=%s", wg.getSlave().getLabel(),
-                               wg.wd_used.wd_name);
-              if (count++ == 0)
-                printWgInfo(" ");
-              printWgInfo("Removed wd=%s,sd=%s from host=%s ",
-                          wg.wd_used.wd_name,
-                          wg.sd_used.sd_name,
-                          busiest.getLabel());
-
-
-              //ArrayList <WG_entry> wgs_for_sd_on_busiest = busiest.getWgsForSd(sd);
-              //
-              //for (int i = 0; i < wgs_for_sd_on_busiest.size(); i++)
-              //{
-              //  WG_entry wg2 = wgs_for_sd_on_busiest.get(i);
-              //  if (wg2.wd_used == wg.wd_used)
-              //  {
-              //    common.ptod("removing dup?: sd=%s wd=%s host=%s", sd.sd_name, wg.wd_name, busiest.getLabel());
-              //    boolean rc = wgs_for_sd_on_busiest.remove(wg2);
-              //    if (!rc)
-              //      common.failure("not found?");
-              //    break;
-              //  }
-              //}
-
-              continue toploop;
-
-
-
-
-              //  break hostloop;
-            }
-          }
-        }
-      }
-      break;
-    }
-
-    if (count > 0)
-      printWgInfo(" ");
-  }
-
 
 
   /**
@@ -2266,13 +2213,26 @@ public class RD_entry implements Serializable, Cloneable
     }
 
 
+    /* When a skewed workload is requested we need to make sure that each WD   */
+    /* used by an SD ends up on the same slave.                                */
+    /* Since at the start here each WD+SD combination (a WG_entry) has been    */
+    /* given to each slave, we need to make sure that all the SDs in those     */
+    /* WGs have at least one thread on a slave.                                */
+    /* We enforce this by round robining the thread assignments across slaves. */
+    /* However, if there are more slaves than threads we need to limit that    */
+    /* round robin, which we do right here:                                    */
+    /* Of course, when the user specifies different thread counts for SDs all  */
+    /* bets are off.                                                           */
+    int round_robin_slave = -1;
+
     /* Check for each SD: */
+    ArrayList <WG_entry> workloads = getAllWorkloads();
     for (SD_entry sd : getSdsForRD())
     {
       sd.setActive();
 
       /* How many hosts are using this SD in this run? If none, ignore */
-      ArrayList <Host> hosts = getHostsForSd(sd);
+      ArrayList <Host> hosts = getHostsForSd(sd, workloads);
       if (hosts.size() == 0)
         continue;
 
@@ -2292,8 +2252,7 @@ public class RD_entry implements Serializable, Cloneable
         if (threads_requested % stream_count != 0)
         {
           common.failure("'threads=%d' must be a multiple of the amount of streams=%d",
-                         threads_requested,
-                         stream_count);
+                         threads_requested, stream_count);
         }
       }
 
@@ -2306,7 +2265,7 @@ public class RD_entry implements Serializable, Cloneable
       {
         int round = robin_host++ % hosts.size();
         Host host = (Host) hosts.get(round);
-        if (isSdUsedOnHost(host, sd))
+        if (isSdUsedOnHost(host, workloads, sd))
         {
           /* When not using streams we can simply round-robin all threads: */
           if (stream_count == 0)
@@ -2338,11 +2297,12 @@ public class RD_entry implements Serializable, Cloneable
       long loop = 0;
       for (int host_index = 0; host_index < hosts.size(); host_index++)
       {
+        Host host               = hosts.get(host_index);
+        Vector <Slave> slaves   = host.getSlaves();
+
         /* We must make sure that if a host has work, slave0 has at least */
         /* some of it because slave0 returns cpu + Kstat info:            */
 
-        Host host               = (Host) hosts.get(host_index);
-        Vector <Slave> slaves   = host.getSlaves();
         int[] threads_for_slave = new int[ slaves.size() ];
 
         for (int host_thread_count = 0; host_thread_count < threads_for_host[host_index];)
@@ -2365,7 +2325,7 @@ public class RD_entry implements Serializable, Cloneable
             common.failure("loop protection slave=%s,sd=%s", slave.getLabel(), sd.sd_name);
           }
 
-          if (isSdUsedOnSlave(slave, sd))
+          if (isSdUsedOnSlave(slave, workloads, sd))
           {
             /* When not using streams we can simply round-robin the threads: */
             if (stream_count == 0)
@@ -2410,17 +2370,83 @@ public class RD_entry implements Serializable, Cloneable
       }
     }
 
+    HandleSkew.spreadWgSkew(this); // This call for reporting only
+    reportSpread(last_pass, "Before zero threads check");
+
+    reportSpread(true, "last=%b Before zero threads check", last_pass);
+
 
     /* Now remove all WGs that have a zero thread count for its SD: */
-    for (WG_entry wg : getAllWorkloads())
+    top:
+    for (int i = 0; i < workloads.size(); i++)
     {
+      WG_entry wg = workloads.get(i);
+      //if (last_pass) common.ptod("current wg: " + wg.report(this));
+
       //common.ptod("getSdThreadsUsedForSlave: %-15s %s", wg.sd_used.sd_name, wg.getSlave().getLabel()) ;
       if (getSdThreadsUsedForSlave(wg.sd_used.sd_name, wg.getSlave()) == 0)
       {
+        // Can we move the workload to a slave that already has the SD but not the WD?
+        // that must be a different slave
+        // that slave also already must have a thread for this SD.
+        // Threads already have been handed out so that should not be a problem.
+        // Theory: best case: if there are multiple candidate slaves, move it to the least busy.
+        for (Slave new_slave : wg.getSlave().getHost().getSlaves())
+        {
+          /* Must of course be a DIFFERENT slave: */
+          if (new_slave == wg.getSlave())
+            continue;
+
+          ArrayList <WG_entry> new_workloads = new_slave.getWorkloads();
+          for (int j = 0; j < new_workloads.size(); j++)
+          {
+            WG_entry wg2 = new_workloads.get(j);
+
+            /* Look for this SD name on this different slave: */
+            if (wg2.sd_used.sd_name.equals(wg.sd_used.sd_name))
+            {
+              if (getSdThreadsUsedForSlave(wg.sd_used.sd_name, new_slave) != 0)
+              {
+                if (wg.getSlave().removeWorkload(wg, this) == 0)
+                  common.failure("Unable to remove wd=%s from slave=%s", wg.wd_used.wd_name, wg.getSlave().getLabel());
+
+                /* If that slave already has this workload, just remove, don't move: */
+                for (WG_entry wg3 : new_slave.getWorkloads())
+                {
+                  if (wg3.wd_used.wd_name.equals(wg.wd_used.wd_name) &&
+                      wg3.sd_used.sd_name.equals(wg.sd_used.sd_name))
+                  {
+                    if (debug)
+                      common.ptod("No threads available, removed wd=%s,sd=%s from slave %s",
+                                  wg.wd_used.wd_name, wg.sd_used.sd_name,
+                                  wg.getSlave().getLabel());
+                    continue top;
+                  }
+                }
+
+
+
+                /* This slave has this SD, but not this wg. Add it there: */
+                wg.setSlave(new_slave);
+                new_slave.addWorkload(wg, this);
+
+                HandleSkew.spreadWgSkew(this); // This call for reporting only
+                reportSpread(last_pass, "Added workload to different slave wd=%s,sd=%s from slave %s to slave %s",
+                             wg.wd_used.wd_name, wg.sd_used.sd_name,
+                             wg.getSlave().getLabel(), new_slave.getLabel());
+
+                continue top;
+              }
+            }
+          }
+        }
+
+
+        // This 'if lastpass' must be put back in once testing is done.
         if (last_pass) // && debug)
-          common.ptod("spreadSdThreadsAcrossSlaves: Workload removed, not enough threads for slave=%s,wd=%s,sd=%s",
+          common.plog("spreadSdThreadsAcrossSlaves: Workload removed, not enough threads for slave=%s,wd=%s,sd=%s",
                       wg.getSlave().getLabel(), wg.wd_name, wg.sd_used.sd_name);
-        int removes = wg.getSlave().removeWorkload(wg);
+        int removes = wg.getSlave().removeWorkload(wg, this);
         if (removes == 0)
           common.failure("Unable to remove wd=%s from host=%s", wg.wd_used.wd_name, wg.getSlave().getLabel());
         //printWgInfo("spreadSdThreadsAcrossSlaves Not enough threads for slave=%s,wd=%s,sd=%s",
@@ -2431,23 +2457,115 @@ public class RD_entry implements Serializable, Cloneable
 
 
     /* Report: */
-    for (Host host : Host.getDefinedHosts())
-    {
-      int total     = 0;
+    HandleSkew.spreadWgSkew(this); // This call for reporting only
+    reportSpread(last_pass, "Final");
 
-      for (Slave slave : host.getSlaves())
+
+    if (common.get_debug(common.PRINT_SPREAD))
+    {
+      ArrayList <WG_entry> wklds = Host.getAllWorkloads();
+      HandleSkew.spreadWgSkew(this); // This call for reporting only
+
+      common.ptod("Workloads, sorted by slave: ");
+      WG_entry.sortWorkloads(wklds, "slave");
+      for (WG_entry wg : wklds)
+        common.ptod(wg.report(this));
+
+      common.ptod("Workloads, sorted by sd: ");
+      WG_entry.sortWorkloads(wklds, "sd");
+      for (WG_entry wg : wklds)
+        common.ptod(wg.report(this));
+
+      common.ptod("Workloads, sorted by wd: ");
+      WG_entry.sortWorkloads(wklds, "wd");
+      for (WG_entry wg : wklds)
+        common.ptod(wg.report(this));
+
+      printThreadsUsedBySlaves();
+    }
+  }
+
+
+  private void giveThreadsToSlaves(Host host, SD_entry sd, int threads_for_host)
+  {
+    int threads_requested = getThreadsFromSdOrRd(sd);
+    int loop = 0;
+    int stream_count = rd_stream_count;
+    Vector <Slave> slaves   = host.getSlaves();
+
+
+    /* We must make sure that if a host has work, slave0 has at least */
+    /* some of it because slave0 returns cpu + Kstat info:            */
+    int[] threads_for_slave = new int[ slaves.size() ];
+
+    ArrayList <WG_entry> workloads = getAllWorkloads();
+    for (int host_thread_count = 0; host_thread_count < threads_for_host;)
+    {
+      Slave slave = host.getLeastBusyThreads(sd);
+
+      /* Need to find the relative slave# for 'round robin': */
+      int round = 0;
+      for (round = 0; round < slaves.size(); round++)
       {
-        int threads = getThreadsUsedForSlave(slave);
-        total += threads;
-        if (debug) common.ptod("Threads for rd=" + rd_name + " " + slave.getLabel() + ": " + threads);
+        Slave sl2 = slaves.get(round);
+        if (sl2 == slave)
+          break;
       }
-      if (debug) common.ptod("Total threads for rd=" + rd_name + ": " + total);
+
+      if (loop++ > 100000) // only a low value for debugging
+      {
+        common.ptod("host_thread_count: " + host_thread_count);
+        common.ptod("threads_for_host: " + threads_for_host);
+        common.failure("loop protection slave=%s,sd=%s", slave.getLabel(), sd.sd_name);
+      }
+
+      if (isSdUsedOnSlave(slave, workloads, sd))
+      {
+        /* When not using streams we can simply round-robin the threads: */
+        if (stream_count == 0)
+        {
+          threads_for_slave[ round ]++;
+          host_thread_count++;
+          slave.threads_given_to_slave++;
+        }
+
+        /* With streams though we must round-robin them in sets of 'threads per stream': */
+        else
+        {
+          int threads_per_stream = threads_requested / stream_count;
+          if (threads_per_stream == 0)
+            common.failure("threads_per_stream may not be zero");
+          threads_for_slave[ round ]   += threads_per_stream;
+          host_thread_count            += threads_per_stream;
+          slave.threads_given_to_slave += threads_per_stream;
+        }
+      }
     }
 
-    for (int i = 0; i < Vdbmain.sd_list.size(); i++)
+    /* Preserve the thread counts per SD/slave: */
+    for (int k = 0; k < slaves.size(); k++)
+      setThreadsUsedForSlave(sd.sd_name, slaves.get(k), threads_for_slave[k]);
+  }
+
+  private void reportSpread(boolean last_pass, String format, Object ... args)
+  {
+    //if (!common.get_debug(common.DEBUG_SPREAD) && last_pass)
+    if (!last_pass)
+      return;
+
+    if (!common.get_debug(common.PRINT_SPREAD))
+      return;
+
+    //if (!format.startsWith("Final"))
+    //  return;
+
+    /* The order of this reporting is based on what comes from getAllWorkloads, */
+    /* which is 'sd': */
+    common.ptod("");
+    common.ptod("reportSpread: state=" + String.format(format, args));
+    for (WG_entry wg : Host.getAllWorkloads())
     {
-      SD_entry sd = (SD_entry) Vdbmain.sd_list.elementAt(i);
-      //if (report) common.plog("Threads for sd=" + sd.sd_name + " " + getThreadsUsedForSd(sd));
+      common.ptod(wg.report(this));
     }
   }
 
@@ -2642,9 +2760,9 @@ public class RD_entry implements Serializable, Cloneable
 
 
 
-  private boolean isSdUsedOnHost(Host host, SD_entry sd)
+  private boolean isSdUsedOnHost(Host host, ArrayList <WG_entry> workloads, SD_entry sd)
   {
-    for (WG_entry wg : getAllWorkloads())
+    for (WG_entry wg : workloads)
     {
       //common.ptod("wg.slave.getHost(): " + wg.slave.getHost() + " " + host +
       //            " " + wg.sd_used.sd_name + " " + sd.sd_name);
@@ -2654,9 +2772,9 @@ public class RD_entry implements Serializable, Cloneable
     return false;
   }
 
-  private boolean isSdUsedOnSlave(Slave slave, SD_entry sd)
+  private boolean isSdUsedOnSlave(Slave slave, ArrayList <WG_entry> workloads, SD_entry sd)
   {
-    for (WG_entry wg : getAllWorkloads())
+    for (WG_entry wg : workloads)
     {
       //common.ptod("wg.slave.getHost(): " + wg.slave.getHost() + " " + host +
       //            " " + wg.sd_used.sd_name + " " + sd.sd_name);
@@ -2694,10 +2812,10 @@ public class RD_entry implements Serializable, Cloneable
   /**
    * Count the number of hosts that want to use a specific SD.
    */
-  private ArrayList <Host> getHostsForSd(SD_entry sd)
+  private ArrayList <Host> getHostsForSd(SD_entry sd, ArrayList <WG_entry> workloads)
   {
     HashMap <Host, Object> hosts_for_sd = new HashMap(8);
-    for (WG_entry wg : getAllWorkloads())
+    for (WG_entry wg : workloads)
     {
       //common.ptod("countHostsForSd wg: " + wg.sd_used + " " + sd.sd_name);
       if (wg.sd_used == sd)
@@ -2831,6 +2949,12 @@ public class RD_entry implements Serializable, Cloneable
         rd.wds_for_rd.add(clone);
         common.plog("No Workload Definitions defined for rd=" + rd.rd_name +
                     "; using the latest wd=default instead.");
+
+        /* There basically is no need for a WD report if there is only ONE workload. */
+        /* Users can just look at the total workloads in summary.html.               */
+        /* (We already had the philosophy anyway to not generate a WD report         */
+        /* if we had only ONE wd.)                                                   */
+        //clone.wd_is_used = true;
       }
 
       else
@@ -2978,6 +3102,19 @@ public class RD_entry implements Serializable, Cloneable
     return threads;
   }
 
+  public void printThreadsUsedBySlaves()
+  {
+    String[] keys = threads_per_slave_map.keySet().toArray(new String[0]);
+    Arrays.sort(keys);
+
+    for (int i = 0; i < keys.length; i++)
+    {
+      ArrayList list = threads_per_slave_map.get(keys[i]);
+      if (list.size() > 0)
+        common.ptod("printThreadsUsedBySlaves: %12s %2d", keys[i], list.size());
+    }
+  }
+
   public int getThreadsUsedForSD(String sd_name)
   {
     String[] keys = (String[]) threads_per_slave_map.keySet().toArray(new String[0]);
@@ -3063,6 +3200,17 @@ public class RD_entry implements Serializable, Cloneable
   public void setInterval(long in)
   {
     interval = in;
+  }
+
+  public static boolean getOrPutUsed()
+  {
+    for (FwgEntry fwg : next_rd.fwgs_for_rd)
+    {
+      if (fwg.getOperation() == Operations.GET ||
+          fwg.getOperation() == Operations.PUT)
+        return true;
+    }
+    return false;
   }
 
   /**
@@ -3224,12 +3372,23 @@ public class RD_entry implements Serializable, Cloneable
     }
   }
 
-  private SD_entry[] getSdsForRD()
+  /**
+   * Note that the SDs, because they come via a HashMap, need to always be
+   * returned in the same sequence, therefore the sort.
+   */
+  private ArrayList <SD_entry> getSdsForRD()
   {
-    HashMap <SD_entry, SD_entry> sd_map = new HashMap(64);
+    HashMap <String, SD_entry> sd_map = new HashMap(64);
     for (WG_entry wg : getAllWorkloads())
-      sd_map.put(wg.sd_used, wg.sd_used);
-    return sd_map.values().toArray(new SD_entry[0]);
+      sd_map.put(wg.sd_used.sd_name, wg.sd_used);
+
+    String[] keys = sd_map.keySet().toArray(new String[0]);
+    Arrays.sort(keys);
+    ArrayList <SD_entry> list = new ArrayList(32);
+    for (String key : keys)
+      list.add(sd_map.get(key));
+
+    return list;
   }
 
 
@@ -3280,7 +3439,7 @@ public class RD_entry implements Serializable, Cloneable
   /**
    * Return SD names used for this RD_entry
    */
-  public String[] getSdNamesUsedThisRd()
+  public String[] obsolete_getSdNamesUsedThisRd()
   {
     HashMap map = new HashMap(16);
 
@@ -3457,6 +3616,27 @@ public class RD_entry implements Serializable, Cloneable
         return wg.getSlave();
     }
     return null;
+  }
+
+  /**
+   * This code here is a start. I hope to have logic in here also that says
+   * "restart at rd_xyz and then continue".
+   */
+  private static String  restart_rd = null;
+  private static boolean rd_only    = true;
+  public static void parseRestart(String parm)
+  {
+    restart_rd = parm;
+  }
+
+  private boolean anySkewRequested()
+  {
+    for (WD_entry wd : wds_for_rd)
+    {
+      if (wd.skew_original != 0)
+        return true;
+    }
+    return false;
   }
 }
 

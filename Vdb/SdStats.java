@@ -11,6 +11,7 @@ package Vdb;
 import java.io.*;
 import java.text.DecimalFormat;
 import java.util.Collections;
+import java.util.Date;
 import java.util.Vector;
 
 import Utils.Format;
@@ -25,7 +26,7 @@ public class SdStats implements Serializable
 
   String sd_name;
   String wd_name;
-  long   last_ts;
+
   long   elapsed;
 
   long   reads;
@@ -33,20 +34,22 @@ public class SdStats implements Serializable
   long   r_resptime2;            /* Sum of squares of same                    */
   long   r_max;
   long   r_bytes;
-  long   r_errors;
 
   long   writes;
   long   w_resptime;             /* Duration in jni around rw calls           */
   long   w_resptime2;            /* Sum of squares of same                    */
   long   w_max;
   long   w_bytes;
-  long   w_errors;
 
-  long   val_count;
-  long   val_error;
+  long   val_count;              /* These four as of 04/21/17 are not used,   */
+  long   val_error;              /* but maybe some day ......                 */
+  long   r_errors;
+  long   w_errors;
 
   long   rtime;                  /* cumulative run (service) time             */
   long   rlentime;               /* cumulative run length*time product        */
+
+  boolean  work_done;
 
   Histogram histogram  = new Histogram("default");
   Histogram read_hist  = new Histogram("default");
@@ -57,8 +60,8 @@ public class SdStats implements Serializable
 
   /**
    * We really only want histograms at the end.
-   * By clearing the by default allocated histgrams we prevent the info to be
-   * send from the slave to the master
+   * By clearing the by default allocated histgrams we prevent the info from
+   * being sent from the slave to the master
    */
   public void clearHistograms()
   {
@@ -69,8 +72,6 @@ public class SdStats implements Serializable
 
   void stats_accum(SdStats in, boolean add_elapsed)
   {
-    last_ts     =  in.last_ts;
-
     reads       += in.reads;
     r_resptime  += in.r_resptime;
     r_resptime2 += in.r_resptime2;
@@ -112,7 +113,6 @@ public class SdStats implements Serializable
   void stats_copy(SdStats in)
   {
     sd_name     = in.sd_name;
-    last_ts     = in.last_ts;
     elapsed     = in.elapsed;
 
     reads       = in.reads;
@@ -146,8 +146,6 @@ public class SdStats implements Serializable
 
   void stats_delta(SdStats nw, SdStats old)
   {
-    elapsed     = nw.last_ts     - old.last_ts;
-
     reads       = nw.reads       - old.reads;
     r_resptime  = nw.r_resptime  - old.r_resptime;
     r_resptime2 = nw.r_resptime2 - old.r_resptime2;
@@ -279,8 +277,15 @@ public class SdStats implements Serializable
 
   public double respMax()
   {
-    long max = Math.max(r_max, w_max);
-    return(double) max / 1000;
+    return(double) Math.max(r_max, w_max) / 1000.;
+  }
+  public double readMax()
+  {
+    return(double) r_max / 1000.;
+  }
+  public double writeMax()
+  {
+    return(double) w_max / 1000.;
   }
 
   public double resptime_std()
@@ -293,9 +298,28 @@ public class SdStats implements Serializable
     long resptime  = r_resptime  + w_resptime;
     long resptime2 = r_resptime2 + w_resptime2;
 
-    return Math.sqrt( ( (total  * (double) resptime2) -
+    return Math.sqrt( ( (total * (double) resptime2) -
                         ( (double) resptime * (double) resptime) ) /
                       (total * (total - 1) ) ) / 1000.0 ;
+  }
+
+  public double readStd()
+  {
+    if (reads <= 1 || r_resptime == 0)
+      return 0;
+
+    return Math.sqrt( ( (reads * (double) r_resptime2) -
+                        ( (double) r_resptime * (double) r_resptime) ) /
+                      (reads * (reads - 1) ) ) / 1000.0 ;
+  }
+  public double writeStd()
+  {
+    if (writes <= 1 || w_resptime == 0)
+      return 0;
+
+    return Math.sqrt( ( (writes * (double) w_resptime2) -
+                        ( (double) w_resptime * (double) w_resptime) ) /
+                      (writes * (writes - 1) ) ) / 1000.0 ;
   }
 
   public double busypct()

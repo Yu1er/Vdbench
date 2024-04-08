@@ -19,16 +19,19 @@ public class ParseFlat
   "Copyright (c) 2000, 2013, Oracle and/or its affiliates. All rights reserved.";
 
   private static boolean quiet          = false;
+  private static boolean comma          = true;
   private static String  input_file     = null;
   private static String  output_file    = "-";
   private static String  label_file     = null;
 
   private static boolean average        = false;
   private static Vector  <String[]> split_data     = new    Vector(256);
-  private static Vector  column_names   = new    Vector(36);
-  private static Vector  filter_columns = new    Vector(36);
-  private static Vector  filter_values  = new    Vector(36);
-  private static Vector  output_cols    = new    Vector(36);
+  private static Vector  <String> column_names   = new    Vector(36);
+  private static Vector  <String> filter_columns = new    Vector(36);
+  private static Vector  <String> filter_values  = new    Vector(36);
+  private static Vector  <String> output_cols    = new    Vector(36);
+
+  private static boolean all_columns = false;
 
   /**
   * Usage: ParseFlat flatfile.html
@@ -49,6 +52,13 @@ public class ParseFlat
 
     /* Read the possible column names from flatfile: */
     readColumnHeadersAndData();
+
+    if (output_cols.size() == 1 && output_cols.get(0).equals("all"))
+    {
+      output_cols.clear();
+      for (String col : column_names)
+        output_cols.add(col);
+    }
 
     /* Make sure the ones requested exist: */
     checkColumnNames(filter_columns);
@@ -90,8 +100,8 @@ public class ParseFlat
         if (split.length != column_names.size())
         {
           common.ptod("line: " + line);
-          common.ptod("ParseFlat: data line incomplete, expecting %d columns, line ignored.",
-                      column_names.size());
+          common.ptod("ParseFlat: data line incomplete, expecting %d columns, getting %d. Line ignored.",
+                      column_names.size(), split.length);
           common.ptod("This is acceptable for the last line in the file.");
         }
         else
@@ -136,13 +146,15 @@ public class ParseFlat
     {
       String colname = (String) output_cols.elementAt(j);
       if (j > 0)
-        txt += ",";
+        txt += (comma) ? "," : "\t";
       txt += colname;
     }
     fp.println(txt);
 
     /* Remove all 'format=' runs: */
-    removeFormat();
+    // Removed 9/12/17. Did not remember why I did this in the first place.
+    // Having ONLY a format caused parse to abort 'no data'.
+    //removeFormat();
 
     /* Remove/keep 'avg_' line: */
     checkAverage();
@@ -179,7 +191,7 @@ public class ParseFlat
               data = "0";
 
             if (j > 0)
-              txt += ",";
+              txt += (comma) ? "," : "\t";
             txt += data;
 
             /* Decide whether to use this interval: */
@@ -215,14 +227,22 @@ public class ParseFlat
 
   private static void removeFormat()
   {
+    int count = 0;
     /* Remove all 'format=' runs: */
     for (int i = 0; i < split_data.size(); i++)
     {
       String[] split = (String[]) split_data.elementAt(i);
       int run = findColumnNo("run");
       if (split[run].startsWith(RD_entry.FSD_FORMAT_RUN))
+      {
+        count++;
         split_data.removeElementAt(i--);
+      }
     }
+
+    if (count > 0)
+      common.ptod("Flatfile parser removed all Run Definitions starting with '%s'",
+                  RD_entry.FSD_FORMAT_RUN);
   }
 
   private static void checkAverage()
@@ -254,13 +274,14 @@ public class ParseFlat
     common.ptod("");
     common.ptod("Usage:");
     common.ptod("./vdbench parseflat -i flatfile.html -o output.csv [-c col1 col2 ..] ");
-    common.ptod("                 [-a] [-f col1 value1 col2 value2 .. ..] [-q]");
+    common.ptod("                 [-t][-a] [-f col1 value1 col2 value2 .. ..] [-q]");
     common.ptod("");
     common.ptod("-i input flatfile, e.g. output/flatfile.html");
     common.ptod("-o output csv file name (default stdout)");
-    common.ptod("-c which column to write to CSV. Columns are written in the order specified.");
+    common.ptod("-c which column to write to output. Columns are written in the order specified.");
     common.ptod("-f filters: 'if (colX == valueX) ... ...' (Alphabetic compare)");
     common.ptod("-a include only the 'avg' data. Default: include only non-avg data.");
+    common.ptod("-a Creat tab-separated file, not comma-separated");
     common.ptod("");
     common.ptod("");
     common.ptod("");
@@ -283,6 +304,8 @@ public class ParseFlat
       }
       else if (arg.startsWith("-q"))
         quiet = true;
+      else if (arg.startsWith("-t"))
+        comma = false;
       else
         parms.add(arg);
     }
@@ -332,7 +355,11 @@ public class ParseFlat
       else if (args[i].startsWith("-c"))
       {
         for (int j = i+1; j < args.length && !args[j].startsWith("-"); j++)
+        {
+          if (args[j].equals("all"))
+            all_columns = true;
           output_cols.add(args[++i]);
+        }
       }
 
       /* 'avg' lines? */
@@ -356,5 +383,12 @@ public class ParseFlat
       usage("No input file specified '-f xxx'");
     if (output_cols.size() == 0)
       usage("No data columns specified '-c xxx yyy zzz'");
+
+    /* if the input is a directory, try flatfile: */
+    if (Fget.dir_exists(input_file))
+    {
+      if (Fget.file_exists(input_file, "flatfile.html"))
+        input_file = new File(input_file, "flatfile.html").getAbsolutePath();
+    }
   }
 }

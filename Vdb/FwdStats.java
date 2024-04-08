@@ -27,30 +27,41 @@ public class FwdStats implements java.io.Serializable
   private final static String c =
   "Copyright (c) 2000, 2016, Oracle and/or its affiliates. All rights reserved.";
 
-  public FwdCounter read    = new FwdCounter(this);
-  public FwdCounter write   = new FwdCounter(this);
-  public FwdCounter mkdir   = new FwdCounter(this);
-  public FwdCounter create  = new FwdCounter(this);
-  public FwdCounter getattr = new FwdCounter(this);
-  public FwdCounter setattr = new FwdCounter(this);
-  public FwdCounter access  = new FwdCounter(this);
-  public FwdCounter open    = new FwdCounter(this);
-  public FwdCounter close   = new FwdCounter(this);
-  public FwdCounter copy    = new FwdCounter(this);
-  public FwdCounter move    = new FwdCounter(this);
-  public FwdCounter delete  = new FwdCounter(this);
-  public FwdCounter rmdir   = new FwdCounter(this);
+  public FwdCounter read    = new FwdCounter(this, "read   " );
+  public FwdCounter write   = new FwdCounter(this, "write  " );
+  public FwdCounter mkdir   = new FwdCounter(this, "mkdir  " );
+  public FwdCounter create  = new FwdCounter(this, "create " );
+  public FwdCounter getattr = new FwdCounter(this, "getattr" );
+  public FwdCounter setattr = new FwdCounter(this, "setattr" );
+  public FwdCounter access  = new FwdCounter(this, "access " );
+  public FwdCounter open    = new FwdCounter(this, "open   " );
+  public FwdCounter close   = new FwdCounter(this, "close  " );
+  public FwdCounter copy    = new FwdCounter(this, "copy   " );
+  public FwdCounter move    = new FwdCounter(this, "move   " );
+  public FwdCounter delete  = new FwdCounter(this, "delete " );
+  public FwdCounter rmdir   = new FwdCounter(this, "rmdir  " );
 
-  private long       r_bytes = 0;
-  private long       w_bytes = 0;
+  // get/put could possible all removed, but I have not figured
+  // out how to include get/put counts in 'requested ops'.
+  // Hold off for now removing.
+  public FwdCounter put     = new FwdCounter(this, "put    " );
+  public FwdCounter get     = new FwdCounter(this, "get    " );
+
+  public long       r_bytes = 0;
+  public long       w_bytes = 0;
+
+  public long       permit_time = 0;
+  public long       permit_count = 0;
 
   private long elapsed;
+
+  public boolean work_done;
 
 
   private static Bin fwd_bin_file;
   private static String all_fields;
 
-  private static FwdPrint inp  = new FwdPrint("Interval",   "",      "10.0");
+  private static FwdPrint inp  = new FwdPrint("Interval",   "",      "12.0");
   private static FwdPrint acp  = new FwdPrint("ReqstdOps.", "rate",  "6.1", "resp",  "6.3");
   private static FwdPrint cpup = new FwdPrint("cpu%",       "total", "5.1", "sys",   "4.2");
   private static FwdPrint rdp  = new FwdPrint("read",       "rate",  "6.1", "resp",  "6.3");
@@ -70,6 +81,8 @@ public class FwdStats implements java.io.Serializable
   private static FwdPrint accs = new FwdPrint("access",     "rate",  "5.1", "resp",  "6.3");
   private static FwdPrint copp = new FwdPrint("copy",       "rate",  "5.1", "resp",  "6.3");
   private static FwdPrint movp = new FwdPrint("move",       "rate",  "5.1", "resp",  "6.3");
+  private static FwdPrint putp = new FwdPrint("put",        "mb",  "5.1");
+  private static FwdPrint ggtp = new FwdPrint("get",        "mb",  "5.1");
 
   private static int time_travel_window = checkTimeTravel();
   private static int time_travel_count  = 0;
@@ -118,7 +131,6 @@ public class FwdStats implements java.io.Serializable
 
     FwgThread thread = (FwgThread) Thread.currentThread();
     thread.per_thread_stats.add(operation, end - start, xfersize);
-
   }
 
 
@@ -130,7 +142,7 @@ public class FwdStats implements java.io.Serializable
   {
     /* These are in order of expected frequency. 'switch' does not let me */
     /* use these non-constants:                                           */
-    //if (     operation == Operations.WRITE    )
+    //if (     operation == Operations.CREATE    )
     //  common.where(8);
 
     if (     operation == Operations.READ    ) read    .addResp(resp);
@@ -146,15 +158,17 @@ public class FwdStats implements java.io.Serializable
     else if (operation == Operations.RMDIR   ) rmdir   .addResp(resp);
     else if (operation == Operations.COPY    ) copy    .addResp(resp);
     else if (operation == Operations.MOVE    ) move    .addResp(resp);
+    else if (operation == Operations.PUT     ) put     .addResp(resp);
+    else if (operation == Operations.GET     ) get     .addResp(resp);
 
     else
       common.failure("FwdStats.add(): unknown operation: " + operation);
 
 
-    if (operation == Operations.READ)
+    if (operation == Operations.READ) // || operation == Operations.GET)
       r_bytes += xfersize;
 
-    else if (operation == Operations.WRITE)
+    else if (operation == Operations.WRITE) // || operation == Operations.PUT)
       w_bytes += xfersize;
   }
 
@@ -173,8 +187,12 @@ public class FwdStats implements java.io.Serializable
     rmdir   .accum(old.rmdir   );
     copy    .accum(old.copy    );
     move    .accum(old.move    );
+    put     .accum(old.put     );
+    get     .accum(old.get     );
     r_bytes += old.r_bytes;
     w_bytes += old.w_bytes;
+    permit_count += old.permit_count;
+    permit_time  += old.permit_time;
 
     if (add_elapsed)
       elapsed += old.elapsed ;
@@ -191,16 +209,20 @@ public class FwdStats implements java.io.Serializable
     create  .delta(nw.create  , old.create  );
     getattr .delta(nw.getattr , old.getattr );
     setattr .delta(nw.setattr , old.setattr );
-    access  .delta(nw.access  , old.access );
+    access  .delta(nw.access  , old.access  );
     open    .delta(nw.open    , old.open    );
     close   .delta(nw.close   , old.close   );
     delete  .delta(nw.delete  , old.delete  );
     rmdir   .delta(nw.rmdir   , old.rmdir   );
     copy    .delta(nw.copy    , old.copy    );
     move    .delta(nw.move    , old.move    );
+    put     .delta(nw.put     , old.put     );
+    get     .delta(nw.get     , old.get     );
 
     r_bytes = nw.r_bytes - old.r_bytes;
     w_bytes = nw.w_bytes - old.w_bytes;
+    permit_count = nw.permit_count - old.permit_count;
+    permit_time  = nw.permit_time  - old.permit_time;
   }
 
 
@@ -212,15 +234,19 @@ public class FwdStats implements java.io.Serializable
     create  .copy(old.create  );
     getattr .copy(old.getattr );
     setattr .copy(old.setattr );
-    access  .copy(old.access );
+    access  .copy(old.access  );
     open    .copy(old.open    );
     close   .copy(old.close   );
     delete  .copy(old.delete  );
     rmdir   .copy(old.rmdir   );
     copy    .copy(old.copy    );
     move    .copy(old.move    );
+    put     .copy(old.put     );
+    get     .copy(old.get     );
     r_bytes = old.r_bytes;
     w_bytes = old.w_bytes;
+    permit_count = old.permit_count;
+    permit_time  = old.permit_time;
   }
 
 
@@ -241,9 +267,17 @@ public class FwdStats implements java.io.Serializable
       }
     }
 
+    String permit1 = "";
+    String permit2 = "";
+    if (common.get_debug(common.REPORT_FWG_PERMITS))
+    {
+      permit1 = " thread";
+      permit2 = "  busy ";
+    }
+
     report.println("");
-    report.println(now + getHeader1(CpuStats.isCpuReporting()) + aux0);
-    report.println("            " + getHeader2(CpuStats.isCpuReporting()) + aux1);
+    report.println(now + getHeader1(CpuStats.isCpuReporting()) + aux0 + permit1);
+    report.println("            " + getHeader2(CpuStats.isCpuReporting()) + aux1 + permit2);
   }
 
   public static String getShortHeader1()
@@ -264,18 +298,20 @@ public class FwdStats implements java.io.Serializable
     line += mbp .getHeader1();
     line += mbt .getHeader1();
     line += xfp .getHeader1();
-    line += mdp .getHeader1();
-    line += ddp .getHeader1();
-    line += crp .getHeader1();
+    if (Operations.isOperationUsed(Operations.MKDIR))  line += mdp .getHeader1();
+    if (Operations.isOperationUsed(Operations.RMDIR))  line += ddp .getHeader1();
+    if (Operations.isOperationUsed(Operations.CREATE)) line += crp .getHeader1();
     line += opp .getHeader1();
     line += clp .getHeader1();
-    line += delp.getHeader1();
+    if (Operations.isOperationUsed(Operations.DELETE)) line += delp.getHeader1();
 
     if (Operations.isOperationUsed(Operations.GETATTR)) line += getp.getHeader1();
     if (Operations.isOperationUsed(Operations.SETATTR)) line += setp.getHeader1();
     if (Operations.isOperationUsed(Operations.ACCESS))  line += accs.getHeader1();
     if (Operations.isOperationUsed(Operations.COPY))    line += copp.getHeader1();
     if (Operations.isOperationUsed(Operations.MOVE))    line += movp.getHeader1();
+    //if (Operations.isOperationUsed(Operations.GET))     line += ggtp.getHeader1();
+    //if (Operations.isOperationUsed(Operations.PUT))     line += putp.getHeader1();
 
     return line;
   }
@@ -299,18 +335,20 @@ public class FwdStats implements java.io.Serializable
     line += mbp .getHeader2();
     line += mbt .getHeader2();
     line += xfp .getHeader2();
-    line += mdp .getHeader2();
-    line += ddp .getHeader2();
-    line += crp .getHeader2();
+    if (Operations.isOperationUsed(Operations.MKDIR))  line += mdp .getHeader2();
+    if (Operations.isOperationUsed(Operations.RMDIR))  line += ddp .getHeader2();
+    if (Operations.isOperationUsed(Operations.CREATE)) line += crp .getHeader2();
     line += opp .getHeader2();
     line += clp .getHeader2();
-    line += delp.getHeader2();
+    if (Operations.isOperationUsed(Operations.DELETE)) line += delp.getHeader2();
 
     if (Operations.isOperationUsed(Operations.GETATTR)) line += getp.getHeader2();
     if (Operations.isOperationUsed(Operations.SETATTR)) line += setp.getHeader2();
     if (Operations.isOperationUsed(Operations.ACCESS))  line += accs.getHeader2();
     if (Operations.isOperationUsed(Operations.COPY))    line += copp.getHeader2();
     if (Operations.isOperationUsed(Operations.MOVE))    line += movp.getHeader2();
+    //if (Operations.isOperationUsed(Operations.GET))     line += ggtp.getHeader2();
+    //if (Operations.isOperationUsed(Operations.PUT))     line += putp.getHeader2();
 
     return line;
   }
@@ -321,7 +359,7 @@ public class FwdStats implements java.io.Serializable
     if (Reporter.needHeaders())
       printHeaders(report);
 
-    printLine(report, kstat_cpu, Format.f("%d", Report.getInterval()));
+    printLineL(report, kstat_cpu, Format.f("%d", Report.getInterval()));
   }
 
   /**
@@ -329,11 +367,98 @@ public class FwdStats implements java.io.Serializable
    */
   public String printShortLine(Report report, Kstat_cpu kc, String lbl)
   {
-    String line = printLine(report, kc, lbl);
+    String line = printLineL(report, kc, lbl);
     return line.substring(inp .getData(lbl).length());
   }
-  public String printLine(Report report, Kstat_cpu kc, String lbl)
+  public String printLineL(Report report, Kstat_cpu kc, String lbl)
   {
+    double r_mb = r_bytes * 1000000. / elapsed / MB;
+    double w_mb = w_bytes * 1000000. / elapsed / MB;
+    long   xfersize = 0;
+    double rdpct    = 0;
+
+    //if (RD_entry.isOperationUsed(Operations.GET) ||
+    //    RD_entry.isOperationUsed(Operations.PUT))
+    //{
+    //  r_mb = NwStats.in_bytes * 1000000. / elapsed / MB;
+    //  w_mb = NwStats.ot_bytes * 1000000. / elapsed / MB;
+    //}
+
+
+    if (read.operations + write.operations > 0)
+    {
+      xfersize = (r_bytes + w_bytes) / (read.operations + write.operations);
+      rdpct    = read.operations * 100. / (read.operations + write.operations);
+    }
+
+    String line = "";
+    line += inp .getData(lbl);
+    line += acp .getData(getReqstdRate(), getReqstdlResp());
+
+    if (CpuStats.isCpuReporting() && kc != null)
+      line += cpup.getData(kc.user_pct() + kc.kernel_pct(), kc.kernel_pct());
+
+    line += pctp.getData(rdpct);
+    line += rdp .getData(read   .rate(),    read   .resp()    );
+    line += wrp .getData(write  .rate(),    write  .resp()    );
+    line += mbp .getData(r_mb,              w_mb              );
+    line += mbt .getData(r_mb + w_mb);
+    line += xfp .getData(xfersize);
+    if (Operations.isOperationUsed(Operations.MKDIR))
+      line += mdp .getData(mkdir  .rate(),    mkdir  .resp()    );
+    if (Operations.isOperationUsed(Operations.RMDIR))
+      line += ddp .getData(rmdir  .rate(),    rmdir  .resp()    );
+    if (Operations.isOperationUsed(Operations.CREATE))
+      line += crp .getData(create .rate(),    create .resp()    );
+    line += opp .getData(open   .rate(),    open   .resp()    );
+    line += clp .getData(close  .rate(),    close  .resp()    );
+    if (Operations.isOperationUsed(Operations.DELETE))
+      line += delp.getData(delete .rate(),    delete .resp()    );
+
+    if (Operations.isOperationUsed(Operations.GETATTR))
+      line += getp.getData(getattr.rate(), getattr.resp());
+    if (Operations.isOperationUsed(Operations.SETATTR))
+      line += setp.getData(setattr.rate(), setattr.resp());
+    if (Operations.isOperationUsed(Operations.ACCESS))
+      line += accs.getData(access. rate(), access .resp());
+    if (Operations.isOperationUsed(Operations.COPY))
+      line += copp.getData(copy   .rate(), copy   .resp());
+    if (Operations.isOperationUsed(Operations.MOVE))
+      line += movp.getData(move   .rate(), move   .resp());
+    //if (Operations.isOperationUsed(Operations.PUT))
+    //  line += putp.getData(put    .rate(), put    .resp());
+    //if (Operations.isOperationUsed(Operations.GET))
+    //  line += ggtp.getData(get    .rate(), get    .resp());
+
+
+    if (permit_count > 0 && common.get_debug(common.REPORT_FWG_PERMITS) &&
+        !lbl.contains("avg"))
+    {
+      long msecs_busy = permit_time / permit_count / elapsed;
+      double pct_busy = (1000. - msecs_busy) * 100 / 1000.;
+      pct_busy = Math.max(0., pct_busy);
+      pct_busy = Math.min(100., pct_busy);
+      line += String.format(" %5.1f", pct_busy);
+    }
+
+
+    if (report == null)
+      return line;
+
+    if (report == Report.getSummaryReport() || report == Report.getStdoutReport())
+    {
+      if (Report.getAuxReport() != null)
+        line += Report.getAuxReport().getSummaryData();
+    }
+
+    report.println(common.tod() + line);
+
+    return null;
+  }
+
+  public String printMaxLine(Report report, Kstat_cpu kc, String lbl)
+  {
+    lbl         = lbl.replace("avg", "max");
     double r_mb = r_bytes * 1000000. / elapsed / MB;
     double w_mb = w_bytes * 1000000. / elapsed / MB;
     long   xfersize = 0;
@@ -347,34 +472,129 @@ public class FwdStats implements java.io.Serializable
 
     String line = "";
     line += inp .getData(lbl);
-    line += acp .getData(getTotalRate(), getTotalResp());
+
+    /* std and max for reqstdops will only be reported if there is only ONE */
+    /* REQUESTED operation. Combinations can not be done, results would be invalid. */
+    FwdCounter single = getSingleCounter();
+    if (single == null)
+      line += acp .getDataZ(0, 0);
+    else
+      line += acp .getDataZ(single.rateMax(), single.respMax());
+
 
     if (CpuStats.isCpuReporting() && kc != null)
-      line += cpup.getData(kc.user_pct() + kc.kernel_pct(), kc.kernel_pct());
+      line += cpup.getDataZ(0, 0);
 
-    line += pctp.getData(rdpct);
-    line += rdp .getData(read   .rate(), read   .resp());
-    line += wrp .getData(write  .rate(), write  .resp());
-    line += mbp .getData(r_mb,           w_mb          );
-    line += mbt .getData(r_mb + w_mb);
-    line += xfp .getData(xfersize);
-    line += mdp .getData(mkdir  .rate(), mkdir  .resp());
-    line += ddp .getData(rmdir  .rate(), rmdir  .resp());
-    line += crp .getData(create .rate(), create .resp());
-    line += opp .getData(open   .rate(), open   .resp());
-    line += clp .getData(close  .rate(), close  .resp());
-    line += delp.getData(delete .rate(), delete .resp());
+    line += pctp.getDataZ(0);
+    line += rdp .getDataZ(read.rateMax(),   read   .respMax() );
+    line += wrp .getDataZ(write.rateMax(),  write  .respMax() );
+    line += mbp .getDataZ(0,                0      );
+    line += mbt .getDataZ(0);
+    line += xfp .getDataZ(0);
+    if (Operations.isOperationUsed(Operations.MKDIR))
+      line += mdp .getDataZ(mkdir.rateMax(),  mkdir  .respMax() );
+    if (Operations.isOperationUsed(Operations.RMDIR))
+      line += ddp .getDataZ(rmdir.rateMax(),  rmdir  .respMax() );
+    if (Operations.isOperationUsed(Operations.CREATE))
+      line += crp .getDataZ(create.rateMax(), create .respMax() );
+    line += opp .getDataZ(open.rateMax(),   open   .respMax() );
+    line += clp .getDataZ(close.rateMax(),  close  .respMax() );
+    if (Operations.isOperationUsed(Operations.DELETE))
+      line += delp.getDataZ(delete.rateMax(), delete .respMax() );
 
     if (Operations.isOperationUsed(Operations.GETATTR))
-        line += getp.getData(getattr.rate(), getattr.resp());
+      line += getp.getDataZ(getattr.rateMax(), getattr.respMax());
     if (Operations.isOperationUsed(Operations.SETATTR))
-        line += setp.getData(setattr.rate(), setattr.resp());
+      line += setp.getDataZ(setattr.rateMax(), setattr.respMax());
     if (Operations.isOperationUsed(Operations.ACCESS))
-        line += accs.getData(access. rate(), access .resp());
+      line += accs.getDataZ(access.rateMax(), access .respMax());
     if (Operations.isOperationUsed(Operations.COPY))
-        line += copp.getData(copy   .rate(), copy   .resp());
+      line += copp.getDataZ(copy.rateMax(), copy   .respMax());
     if (Operations.isOperationUsed(Operations.MOVE))
-        line += movp.getData(move   .rate(), move   .resp());
+      line += movp.getDataZ(move.rateMax(), move   .respMax());
+    //if (Operations.isOperationUsed(Operations.PUT))
+    //  line += putp.getDataZ(put.rateMax(), put   .respMax());
+    //if (Operations.isOperationUsed(Operations.GET))
+    //  line += ggtp.getDataZ(get.rateMax(), get   .respMax());
+
+    if (report == null)
+      return line;
+
+    if (report == Report.getSummaryReport() || report == Report.getStdoutReport())
+    {
+      if (Report.getAuxReport() != null)
+        line += Report.getAuxReport().getSummaryData();
+    }
+
+    report.println(common.tod() + line);
+
+    return null;
+  }
+
+
+  /**
+   * Report standard deviation for those columns that I have info for.
+   */
+  public String printStdLine(Report report, Kstat_cpu kc, String lbl)
+  {
+    lbl         = lbl.replace("avg", "std");
+    double r_mb = r_bytes * 1000000. / elapsed / MB;
+    double w_mb = w_bytes * 1000000. / elapsed / MB;
+    long   xfersize = 0;
+    double rdpct    = 0;
+
+    if (read.operations + write.operations > 0)
+    {
+      xfersize = (r_bytes + w_bytes) / (read.operations + write.operations);
+      rdpct    = read.operations * 100. / (read.operations + write.operations);
+    }
+
+    String line = "";
+    line += inp .getData(lbl);
+
+    /* std and max for reqstdops will only be reported if there is only ONE */
+    /* REQUESTED operation. Combinations can not be done, results would be invalid. */
+    FwdCounter single = getSingleCounter();
+    if (single == null)
+      line += acp .getDataZ(0, 0);
+    else
+      line += acp .getDataZ(single.rateStd(), single.respStd());
+
+
+    if (CpuStats.isCpuReporting() && kc != null)
+      line += cpup.getDataZ(0, 0);
+
+    line += pctp.getDataZ(0);
+    line += rdp .getDataZ(read.rateStd(),   read   .respStd() );
+    line += wrp .getDataZ(write.rateStd(),  write  .respStd() );
+    line += mbp .getDataZ(0,                0      );
+    line += mbt .getDataZ(0);
+    line += xfp .getDataZ(0);
+    if (Operations.isOperationUsed(Operations.MKDIR))
+      line += mdp .getDataZ(mkdir.rateStd(),  mkdir  .respStd() );
+    if (Operations.isOperationUsed(Operations.RMDIR))
+      line += ddp .getDataZ(rmdir.rateStd(),  rmdir  .respStd() );
+    if (Operations.isOperationUsed(Operations.CREATE))
+      line += crp .getDataZ(create.rateStd(), create .respStd() );
+    line += opp .getDataZ(open.rateStd(),   open   .respStd() );
+    line += clp .getDataZ(close.rateStd(),  close  .respStd() );
+    if (Operations.isOperationUsed(Operations.DELETE))
+      line += delp.getDataZ(delete.rateStd(), delete .respStd() );
+
+    if (Operations.isOperationUsed(Operations.GETATTR))
+      line += getp.getDataZ(getattr.rateStd(), getattr.respStd());
+    if (Operations.isOperationUsed(Operations.SETATTR))
+      line += setp.getDataZ(setattr.rateStd(), setattr.respStd());
+    if (Operations.isOperationUsed(Operations.ACCESS))
+      line += accs.getDataZ(access.rateStd(), access .respStd());
+    if (Operations.isOperationUsed(Operations.COPY))
+      line += copp.getDataZ(copy.rateStd(), copy   .respStd());
+    if (Operations.isOperationUsed(Operations.MOVE))
+      line += movp.getDataZ(move.rateStd(), move   .respStd());
+    //if (Operations.isOperationUsed(Operations.PUT))
+    //  line += putp.getDataZ(put.rateStd(), put   .respStd());
+    //if (Operations.isOperationUsed(Operations.GET))
+    //  line += ggtp.getDataZ(get.rateStd(), get   .respStd());
 
     if (report == null)
       return line;
@@ -399,11 +619,19 @@ public class FwdStats implements java.io.Serializable
     elapsed = el;
   }
 
+  // not used.
+  private String conditional(FwdPrint fp, FwdCounter ctr, int operation)
+  {
+    if (Operations.isOperationUsed(operation))
+      return fp.getData(ctr.rate(), ctr.resp());
+    return "";
+  }
+
   /**
    * The totals include ONLY those operations that are requested in the
    * current RD_entry.
    */
-  public double getTotalRate()
+  public double getReqstdRate()
   {
     double total = 0;
 
@@ -424,10 +652,115 @@ public class FwdStats implements java.io.Serializable
       if (isOperationRequested(Operations.ACCESS  )) total += access  .rate();
       if (isOperationRequested(Operations.COPY    )) total += copy    .rate();
       if (isOperationRequested(Operations.MOVE    )) total += move    .rate();
+      if (isOperationRequested(Operations.PUT     )) total += put     .rate();
+      if (isOperationRequested(Operations.GET     )) total += get     .rate();
     }
 
     return total;
   }
+
+  /**
+   * Get the TOTAL rate, whether requested or not.
+   */
+  public double getTotalRate()
+  {
+    double total = 0;
+
+    total += removeTrash(read    .rate());
+    total += removeTrash(write   .rate());
+    total += removeTrash(mkdir   .rate());
+    total += removeTrash(create  .rate());
+    total += removeTrash(open    .rate());
+    total += removeTrash(close   .rate());
+    total += removeTrash(delete  .rate());
+    total += removeTrash(rmdir   .rate());
+    total += removeTrash(getattr .rate());
+    total += removeTrash(setattr .rate());
+    total += removeTrash(access  .rate());
+    total += removeTrash(copy    .rate());
+    total += removeTrash(move    .rate());
+    total += removeTrash(put     .rate());
+    total += removeTrash(get     .rate());
+
+    return total;
+  }
+  private static double removeTrash(double in)
+  {
+    //    //if (in == 0.0)
+    //    //  return 0;
+    //    //if (in == Double.POSITIVE_INFINITY)
+    //    //  return 0;
+    //    //if (in == Double.NEGATIVE_INFINITY)
+    //    //  return 0;
+    //    if (Double.isInfinite(in))
+    //      return 0;
+    //    if (Double.isNaN(in))
+    //      return 0;
+    //    //common.ptod("xxxxxx: %16.8f %16d", in, (long) in);
+    return in;
+  }
+
+
+  /**
+   * For requestedops we need to know if there is indeed only ONE requested
+   * operation, this for std+max
+   */
+  public FwdCounter getSingleCounter()
+  {
+    int operations = 0;
+
+    if (RD_entry.next_rd.rd_name.startsWith(RD_entry.FSD_FORMAT_RUN))
+      return write;
+    else
+    {
+      if (isOperationRequested(Operations.READ    )) operations++;
+      if (isOperationRequested(Operations.WRITE   )) operations++;
+      if (isOperationRequested(Operations.MKDIR   )) operations++;
+      if (isOperationRequested(Operations.CREATE  )) operations++;
+      if (isOperationRequested(Operations.OPEN    )) operations++;
+      if (isOperationRequested(Operations.CLOSE   )) operations++;
+      if (isOperationRequested(Operations.DELETE  )) operations++;
+      if (isOperationRequested(Operations.RMDIR   )) operations++;
+      if (isOperationRequested(Operations.GETATTR )) operations++;
+      if (isOperationRequested(Operations.SETATTR )) operations++;
+      if (isOperationRequested(Operations.ACCESS  )) operations++;
+      if (isOperationRequested(Operations.COPY    )) operations++;
+      if (isOperationRequested(Operations.MOVE    )) operations++;
+      if (isOperationRequested(Operations.PUT     )) operations++;
+      if (isOperationRequested(Operations.GET     )) operations++;
+    }
+
+    if (operations == 0)
+      common.failure("getSingleCounter(): unexpected operations count");
+
+    else if (operations > 1)
+      return null;
+
+    else
+    {
+      if (isOperationRequested(Operations.READ    )) return read    ;
+      if (isOperationRequested(Operations.WRITE   )) return write   ;
+      if (isOperationRequested(Operations.MKDIR   )) return mkdir   ;
+      if (isOperationRequested(Operations.CREATE  )) return create  ;
+      if (isOperationRequested(Operations.OPEN    )) return open    ;
+      if (isOperationRequested(Operations.CLOSE   )) return close   ;
+      if (isOperationRequested(Operations.DELETE  )) return delete  ;
+      if (isOperationRequested(Operations.RMDIR   )) return rmdir   ;
+      if (isOperationRequested(Operations.GETATTR )) return getattr ;
+      if (isOperationRequested(Operations.SETATTR )) return setattr ;
+      if (isOperationRequested(Operations.ACCESS  )) return access  ;
+      if (isOperationRequested(Operations.COPY    )) return copy    ;
+      if (isOperationRequested(Operations.MOVE    )) return move    ;
+      if (isOperationRequested(Operations.PUT     )) return put     ;
+      if (isOperationRequested(Operations.GET     )) return get     ;
+    }
+
+    common.failure("getSingleCounter(): unexpected operations count");
+    return null;
+  }
+
+
+
 
   public long getTotalBytes()
   {
@@ -447,7 +780,7 @@ public class FwdStats implements java.io.Serializable
    * The totals include ONLY those operations that are requested in the
    * current RD_entry.
    */
-  public double getTotalResp()
+  public double getReqstdlResp()
   {
     double total = 0;
 
@@ -473,11 +806,11 @@ public class FwdStats implements java.io.Serializable
     if (total == 0)
       return 0;
 
-    return(double) total / getTotalRate() / (elapsed / 1000.);
+    return(double) total / getReqstdRate() / (elapsed / 1000.);
   }
 
 
-  public Histogram getTotalHistogram()
+  public Histogram getReqstdHistogram()
   {
     Histogram hist = new Histogram("default");
 
@@ -563,38 +896,109 @@ public class FwdStats implements java.io.Serializable
 
     Flat.put_col("Run",          RD_entry.next_rd.rd_name);
     Flat.put_col("Interval",     title);   // reqrate is filled in somehwere in RD_entry.
-    Flat.put_col("rate",         getTotalRate());
-    Flat.put_col("resp",         getTotalResp());
-    Flat.put_col("Read_rate",    read.rate());
-    Flat.put_col("Read_resp",    read.resp());
-    Flat.put_col("MB/sec",       r_mb + w_mb);
-    Flat.put_col("Write_rate",   write.rate());
-    Flat.put_col("Write_resp",   write.resp());
-    Flat.put_col("MB_read",      r_mb);
-    Flat.put_col("MB_write",     w_mb);
-    Flat.put_col("Xfersize",     xfersize);
-    Flat.put_col("Mkdir_rate",   mkdir.rate());
-    Flat.put_col("Mkdir_resp",   mkdir.resp());
-    Flat.put_col("Rmdir_rate",   rmdir.rate());
-    Flat.put_col("Rmdir_resp",   rmdir.resp());
-    Flat.put_col("Create_rate",  create.rate());
-    Flat.put_col("Create_resp",  create.resp());
-    Flat.put_col("Open_rate",    open.rate());
-    Flat.put_col("Open_resp",    open.resp());
-    Flat.put_col("Close_rate",   close.rate());
-    Flat.put_col("Close_resp",   close.resp());
-    Flat.put_col("Delete_rate",  delete.rate());
-    Flat.put_col("Delete_resp",  delete.resp());
-    Flat.put_col("Getattr_rate", getattr.rate());
-    Flat.put_col("Getattr_resp", getattr.resp());
-    Flat.put_col("Setattr_rate", setattr.rate());
-    Flat.put_col("Setattr_resp", setattr.resp());
-    Flat.put_col("Access_rate",  access.rate());
-    Flat.put_col("Access_resp",  access.resp());
-    Flat.put_col("Copy_rate",    copy.rate());
-    Flat.put_col("Copy_resp",    copy.resp());
-    Flat.put_col("Move_rate",    move.rate());
-    Flat.put_col("Move_resp",    move.resp());
+
+    Flat.put_col("rate",         getReqstdRate());
+    FwdCounter single = getSingleCounter();
+    if (single != null)
+    {
+      Flat.put_col("Rate_std",         single.rateStd());
+      Flat.put_col("Rate_max",         single.rateMax());
+    }
+
+    Flat.put_col("resp",         getReqstdlResp());
+    if (single != null)
+    {
+      Flat.put_col("Resp_std",         single.respStd());
+      Flat.put_col("Resp_max",         single.respMax());
+    }
+
+    Flat.put_col("MB/sec",            r_mb + w_mb);
+    Flat.put_col("MB_read",           r_mb);
+    Flat.put_col("MB_write",          w_mb);
+    Flat.put_col("Xfersize",          xfersize);
+
+    Flat.put_col("Read_rate",         read.rate());
+    Flat.put_col("Read_rate_std",     read.rateStd());
+    Flat.put_col("Read_rate_max ",    read.rateMax());
+    Flat.put_col("Read_resp",         read.resp());
+    Flat.put_col("Read_resp_std",     read.respStd());
+    Flat.put_col("Read_resp_max ",    read.respMax());
+
+    Flat.put_col("Write_rate",        write.rate());
+    Flat.put_col("Write_rate_std",    write.rateStd());
+    Flat.put_col("Write_rate_max ",   write.rateMax());
+    Flat.put_col("Write_resp",        write.resp());
+    Flat.put_col("Write_resp_std",    write.respStd());
+    Flat.put_col("Write_resp_max ",   write.respMax());
+
+    Flat.put_col("Mkdir_rate",        mkdir.rate());
+    Flat.put_col("Mkdir_rate_std",    mkdir.rateStd());
+    Flat.put_col("Mkdir_rate_max ",   mkdir.rateMax());
+    Flat.put_col("Mkdir_resp",        mkdir.resp());
+    Flat.put_col("Mkdir_resp_std",    mkdir.respStd());
+    Flat.put_col("Mkdir_resp_max ",   mkdir.respMax());
+
+    Flat.put_col("Rmdir_rate",        rmdir.rate());
+    Flat.put_col("Rmdir_rate_std",    rmdir.rateStd());
+    Flat.put_col("Rmdir_rate_max ",   rmdir.rateMax());
+    Flat.put_col("Rmdir_resp",        rmdir.resp());
+    Flat.put_col("Rmdir_resp_std",    rmdir.respStd());
+    Flat.put_col("Rmdir_resp_max ",   rmdir.respMax());
+
+
+    Flat.put_col("Create_rate",       create.rate());
+    Flat.put_col("Create_rate_std",   create.rateStd());
+    Flat.put_col("Create_rate_max ",  create.rateMax());
+    Flat.put_col("Create_resp",       create.resp());
+    Flat.put_col("Create_resp_std",   create.respStd());
+    Flat.put_col("Create_resp_max ",  create.respMax());
+
+    Flat.put_col("Open_rate",         open.rate());
+    Flat.put_col("Open_rate_std",     open.rateStd());
+    Flat.put_col("Open_rate_max ",    open.rateMax());
+    Flat.put_col("Open_resp",         open.resp());
+    Flat.put_col("Open_resp_std",     open.respStd());
+    Flat.put_col("Open_resp_max ",    open.respMax());
+
+    Flat.put_col("Close_rate",        close.rate());
+    Flat.put_col("Close_rate_std",    close.rateStd());
+    Flat.put_col("Close_rate_max ",   close.rateMax());
+    Flat.put_col("Close_resp",        close.resp());
+    Flat.put_col("Close_resp_std",    close.respStd());
+    Flat.put_col("Close_resp_max ",   close.respMax());
+
+    Flat.put_col("Delete_rate",       delete.rate());
+    Flat.put_col("Delete_rate_std",   delete.rateStd());
+    Flat.put_col("Delete_rate_max ",  delete.rateMax());
+    Flat.put_col("Delete_resp",       delete.resp());
+    Flat.put_col("Delete_resp_std",   delete.respStd());
+    Flat.put_col("Delete_resp_max ",  delete.respMax());
+
+    Flat.put_col("Getattr_rate",      getattr.rate());
+    Flat.put_col("Getattr_rate_std",  getattr.rateStd());
+    Flat.put_col("Getattr_rate_max ", getattr.rateMax());
+    Flat.put_col("Getattr_resp",      getattr.resp());
+    Flat.put_col("Getattr_resp_std",  getattr.respStd());
+    Flat.put_col("Getattr_resp_max ", getattr.respMax());
+
+    Flat.put_col("Setattr_rate",      setattr.rate());
+    Flat.put_col("Setattr_rate_std",  setattr.rateStd());
+    Flat.put_col("Setattr_rate_max ", setattr.rateMax());
+    Flat.put_col("Setattr_resp",      setattr.resp());
+    Flat.put_col("Setattr_resp_std",  setattr.respStd());
+    Flat.put_col("Setattr_resp_max ", setattr.respMax());
+
+    Flat.put_col("Access_rate",       access.rate());
+    Flat.put_col("Access_rate_std",   access.rateStd());
+    Flat.put_col("Access_rate_max ",  access.rateMax());
+    Flat.put_col("Access_resp",       access.resp());
+    Flat.put_col("Access_resp_std",   access.respStd());
+    Flat.put_col("Access_resp_max ",  access.respMax());
+
+    //Flat.put_col("Copy_rate",       copy.rate());
+    //Flat.put_col("Copy_resp",       copy.resp());
+    //Flat.put_col("Move_rate",       move.rate());
+    //Flat.put_col("Move_resp",       move.resp());
 
     if (compratio < 0)
       Flat.put_col("compratio", "n/a");
@@ -645,6 +1049,10 @@ public class FwdStats implements java.io.Serializable
     new Lookup(anchor, "Copy_resp"   );
     new Lookup(anchor, "Move_rate"   );
     new Lookup(anchor, "Move_resp"   );
+    new Lookup(anchor, "Get_rate"    );
+    new Lookup(anchor, "Get_resp"    );
+    new Lookup(anchor, "Put_rate"    );
+    new Lookup(anchor, "Put_resp"    );
     anchor.setDoubles();
 
     all_fields = "";
@@ -713,6 +1121,10 @@ public class FwdStats implements java.io.Serializable
     data += Format.f("%.3f ", copy.resp()    * elapsed / 1000);
     data += Format.f("%.3f ", move.rate()    * elapsed / 1000);
     data += Format.f("%.3f ", move.resp()    * elapsed / 1000);
+    data += Format.f("%.3f ", get.rate()     * elapsed / 1000);
+    data += Format.f("%.3f ", get.resp()     * elapsed / 1000);
+    data += Format.f("%.3f ", put.rate()     * elapsed / 1000);
+    data += Format.f("%.3f ", put.resp()     * elapsed / 1000);
 
     fd.parseNamedData(all_fields + " * " + data);
 
@@ -753,7 +1165,7 @@ public class FwdStats implements java.io.Serializable
 
     if (time_travel_count++ < 100)
       common.ptod("FwdStats.count(): start time greater than end time: " +
-                     start + " " + end + " " + (start - end));
+                  start + " " + end + " " + (start - end));
 
     if (time_travel_count > 1000)
       common.failure("FwdStats.count(): start time greater than end time: " +

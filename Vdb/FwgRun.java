@@ -8,6 +8,7 @@ package Vdb;
  * Author: Henk Vandenbergh.
  */
 
+import java.io.File;
 import java.util.*;
 
 import Utils.Format;
@@ -78,14 +79,12 @@ class FwgRun
       {
         common.ptod("Deleting old file structure.");
         fwg.anchor.setDeletePending(true);
-        //cleanupOldFiles(fwg);
       }
 
       else if (work.format_run && work.format_flags.format_clean)
       {
         common.ptod("Deleting old file structure. (format=clean)");
         fwg.anchor.setDeletePending(true);
-        //cleanupOldFiles(fwg);
       }
 
       fwg.anchor.trackXfersizes(fwg.xfersizes);
@@ -102,7 +101,8 @@ class FwgRun
     {
       long start = System.currentTimeMillis();
       FwgEntry fwg = (FwgEntry) fwgs_for_slave.elementAt(i);
-      common.ptod("Starting initializeFileAnchor for %s", fwg.fsd_name);
+      common.ptod("Starting initializeFileAnchor for rd=%s anchor=%s",
+                  SlaveWorker.work.work_rd_name, fwg.fsd_name);
       //SlaveJvm.sendMessageToConsole("Starting initializeFileAnchor for %s", fwg.fsd_name);
       fwg.anchor.initializeFileAnchor(fwg);
 
@@ -143,7 +143,7 @@ class FwgRun
 
     /* Format must keep track of the status of ALL it's threads to make */
     /* sure that we can switch between mkdir, create, and write together: */
-    if (SlaveWorker.work.format_run)
+    if (work.format_run)
       setupFormatCounters(fwgs_for_slave);
 
     /* Setup the FwgWaiter: */
@@ -151,54 +151,62 @@ class FwgRun
                                      work.fwd_rate, work.distribution);
     waiter.start();
 
+
     /* Create a new thread for each FWG: */
     int starts = 0;
+    ArrayList <File> cleanup_list = null;
     for (int i = 0; i < fwgs_for_slave.size(); i++)
     {
       FwgEntry fwg = (FwgEntry) fwgs_for_slave.elementAt(i);
       fwg.setShutdown(false);
 
+      /* For cleanup we need to tell each thread which level1 directory to delete: */
+      if (work.format_run)
+        cleanup_list = getDirCleanupList(fwg.anchor);
+
+
       /* Start multiple threads: */
+      ArrayList <OpFormat> started_formats = new ArrayList(8);
       for (int j = 0; j < fwg.threads; j++)
       {
-        FwgThread ft = null;
-        //common.ptod("work.fwd_rate: " + work.fwd_rate);
-        //common.ptod("fwg.skew: " + fwg.skew);
-        //common.ptod("fwg.threads: " + fwg.threads);
+        FwgThread fwgthread  = null;
         int operation = fwg.getOperation();
-        String name = (SlaveWorker.work.format_run) ? "OpFormat" :
+        String name = (work.format_run) ? "OpFormat" :
                       Operations.getOperationText(operation);
         Task_num task = new Task_num("FwgThread " + name +
                                      " " + fwg.anchor.getAnchorName());
 
-        if (SlaveWorker.work.format_run)
+        if (work.format_run)
         {
-          ft = new OpFormat(task, fwg);
-          ((OpFormat) ft).setFormatThreadNumber(j);
+          fwgthread = new OpFormat(task, fwg);
+          started_formats.add((OpFormat) fwgthread);
+          ((OpFormat) fwgthread).setFormatThreadNumber(j);
         }
 
         /* This one must be before read+write: */
-        else if (fwg.readpct >= 0)                ft = new OpReadWrite(task, fwg);
-        else if (operation == Operations.MKDIR)   ft = new OpMkdir(task,     fwg);
-        else if (operation == Operations.CREATE)  ft = new OpCreate(task,    fwg);
-        else if (operation == Operations.READ)    ft = new OpRead(task,      fwg);
-        else if (operation == Operations.WRITE)   ft = new OpWrite(task,     fwg);
-        else if (operation == Operations.GETATTR) ft = new OpGetAttr(task,   fwg);
-        else if (operation == Operations.SETATTR) ft = new OpSetAttr(task,   fwg);
-        else if (operation == Operations.ACCESS)  ft = new OpAccess(task,    fwg);
-        else if (operation == Operations.OPEN)    ft = new OpOpen(task,      fwg);
-        else if (operation == Operations.CLOSE)   ft = new OpClose(task,     fwg);
-        else if (operation == Operations.DELETE)  ft = new OpDelete(task,    fwg);
-        else if (operation == Operations.RMDIR)   ft = new OpRmdir(task,     fwg);
-        else if (operation == Operations.COPY)    ft = new OpCopy(task,      fwg);
-        else if (operation == Operations.MOVE)    ft = new OpMove(task,      fwg);
+        else if (fwg.readpct >= 0)                fwgthread = new OpReadWrite(task, fwg);
+        else if (operation == Operations.MKDIR)   fwgthread = new OpMkdir(task,     fwg);
+        else if (operation == Operations.CREATE)  fwgthread = new OpCreate(task,    fwg);
+        else if (operation == Operations.READ)    fwgthread = new OpRead(task,      fwg);
+        else if (operation == Operations.WRITE)   fwgthread = new OpWrite(task,     fwg);
+        else if (operation == Operations.GETATTR) fwgthread = new OpGetAttr(task,   fwg);
+        else if (operation == Operations.SETATTR) fwgthread = new OpSetAttr(task,   fwg);
+        else if (operation == Operations.ACCESS)  fwgthread = new OpAccess(task,    fwg);
+        else if (operation == Operations.OPEN)    fwgthread = new OpOpen(task,      fwg);
+        else if (operation == Operations.CLOSE)   fwgthread = new OpClose(task,     fwg);
+        else if (operation == Operations.DELETE)  fwgthread = new OpDelete(task,    fwg);
+        else if (operation == Operations.RMDIR)   fwgthread = new OpRmdir(task,     fwg);
+        else if (operation == Operations.COPY)    fwgthread = new OpCopy(task,      fwg);
+        else if (operation == Operations.MOVE)    fwgthread = new OpMove(task,      fwg);
+        else if (operation == Operations.PUT)     fwgthread = new OpPutCloud(task,  fwg);
+        else if (operation == Operations.GET)     fwgthread = new OpGetCloud(task,  fwg);
 
         else
           common.failure("Operation not supported (yet?): " + operation);
 
         starts++;
-        ft.start();
-        threads_started.add(ft);
+        fwgthread.start();
+        threads_started.add(fwgthread);
       }
 
       if (!work.format_run)
@@ -213,9 +221,13 @@ class FwgRun
         common.ptod("Started " + fwg.threads + " threads for " +
                     "fwd=" + fwg.getName() + ",fsd=" + fwg.fsd_name);
       }
+
+      /* Format runs are told which level1 directory to delete: */
+      if (work.format_run)
+        giveDirnamesToClean(started_formats, cleanup_list);
     }
 
-    common.plog("Started " + starts + " FwgThreads");
+    common.plog("Started " + starts + " FwgThreads for rd=" + work.work_rd_name);
   }
 
 
@@ -302,7 +314,38 @@ class FwgRun
       anchors[i].mkdir_threads_running  = new FormatCounter(threads[i].intValue());
       anchors[i].create_threads_running = new FormatCounter(threads[i].intValue());
     }
+  }
 
+
+  /**
+   * Create a list of all level1 directories.
+   * This list will be passed on to separate OpFormat threads for cleanup.
+   */
+  private static ArrayList <File> getDirCleanupList(FileAnchor anchor)
+  {
+    ArrayList <File> dirs = new ArrayList(8);
+    for (File dirptr : new File(anchor.getAnchorName()).listFiles())
+    {
+      if (dirptr.getName().startsWith("vdb") &&  dirptr.isDirectory())
+        dirs.add(dirptr);
+    }
+
+    return dirs;
+  }
+
+
+  /**
+   * Round-robin all level1 directories to all OpFormat threads
+   */
+  private static void giveDirnamesToClean(ArrayList <OpFormat> started_formats,
+                                          ArrayList <File>     dir_list)
+  {
+    for (int dir = 0; dir < dir_list.size(); dir++)
+    {
+      int      round_robin = dir % started_formats.size();
+      OpFormat fmt_thread  = started_formats.get(round_robin);
+      fmt_thread.storeCleanDir(dir_list.get(dir));
+    }
   }
 
 

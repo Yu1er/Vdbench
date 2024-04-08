@@ -1,12 +1,12 @@
 package Vdb;
-    
-/*  
- * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved. 
- */ 
-    
-/*  
- * Author: Henk Vandenbergh. 
- */ 
+
+/*
+ * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.
+ */
+
+/*
+ * Author: Henk Vandenbergh.
+ */
 
 import java.io.IOException;
 import java.io.ObjectInputStream;
@@ -25,8 +25,8 @@ import Utils.Format;
   */
 public class BucketRanges implements java.io.Serializable, Cloneable
 {
-  private final static String c = 
-  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved."; 
+  private final static String c =
+  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.";
 
   private String        type;
   private BucketRange[] ranges;
@@ -311,14 +311,15 @@ public class BucketRanges implements java.io.Serializable, Cloneable
     if (Fget.file_exists(ClassPath.classPath("histogram.txt")))
     {
       String[] lines = Fget.readFileToArray(ClassPath.classPath("histogram.txt"));
-      for (int i = 0; i < lines.length; i++)
+      for (String line :  Fget.readFileToArray(ClassPath.classPath("histogram.txt")))
       {
-        if (lines[i].startsWith("*"))
+        line = line.trim();
+        if (line.length() == 0 || line.startsWith("*"))
           continue;
-        if (!lines[i].startsWith("histogram="))
+        if (!line.startsWith("histogram="))
           common.failure("Reading file %s; expecting 'histogram='",
                          ClassPath.classPath("histogram.txt"));
-        StringTokenizer st = new StringTokenizer(lines[i], "=,()");
+        StringTokenizer st = new StringTokenizer(line, "=,()");
         String[] tokens = new String[ st.countTokens() - 1 ];
         st.nextToken();
         for (int j = 0; j < tokens.length; j++)

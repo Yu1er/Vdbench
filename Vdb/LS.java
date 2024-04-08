@@ -22,6 +22,7 @@ public class LS
 
   private   static int       loop_protector = 0;
   private   static ArrayList detail_data    = new  ArrayList(32768);
+  private   static long      size_added     = 0;
   private   static LsData[]  data           = null;
   protected static boolean   reuse          = false;
   protected static boolean   sort_size      = false;
@@ -33,6 +34,8 @@ public class LS
   private   static int       how_deep       = 0;
 
   protected static long      minimum_report = 0;
+
+  private   static long start = System.currentTimeMillis();
 
   public static void main(String[] args) throws Exception
   {
@@ -91,7 +94,7 @@ public class LS
     long files = 0;
     for (int i = 0; i < data.length; i++)
     {
-      total += data[i].size;
+      total += data[i].ls_size;
       files++;
     }
 
@@ -105,6 +108,12 @@ public class LS
       printDetail();
     else
       DirData.printDirectories();
+
+
+    //System.gc();
+    //System.gc();
+    //System.gc();
+    //Jmap.runJmap();
   }
 
   /**
@@ -142,17 +151,26 @@ public class LS
     try
     {
       if (dir_count++ % 100 == 0)
-        System.err.println("\nScanning: " + dirname);
+        System.err.println("\n\nScanning: " + dirname);
       loop_protector++;
 
       if (dir_count % 25 == 0)
       {
+        long seconds     = (System.currentTimeMillis() - start) / 1000;
+        long seconds_dir = (seconds > 0) ? dir_count / seconds : 0;
+
+        /* Reporting: (#dirs) (#files/size) (elapsed/#dirs_per_sec) */
         if (dir_count % 100 == 0)
-          System.err.print(String.format("(%d) (%d)", dir_count, detail_data.size()));
+          System.err.print(String.format("(%d) (%d/%s) (%d secs) (%d dirs/sec)",
+                                         dir_count, detail_data.size(),
+                                         FileAnchor.whatSize(size_added),
+                                         seconds, seconds_dir));
         else
-          System.err.print(String.format("(%d)", dir_count));
+          System.err.print(String.format("(%4d)", dir_count));
       }
-      else
+
+      /* One 'dot' per two directories: */
+      else if (dir_count % 2 == 0)
         System.err.print(".");
 
       if (loop_protector > 20)
@@ -167,7 +185,7 @@ public class LS
       else
         ocmd.addText("/usr/bin/ls -l");
 
-      ocmd.addText(dirname);
+      ocmd.addQuot(dirname);
       ocmd.execute(false);
 
       //common.ptod("ocmd: " + ocmd.getCmd());
@@ -193,7 +211,7 @@ public class LS
           name += split[x] + " ";
         name = name.trim();
 
-        //common.ptod("line: " + line);
+        //common.ptod("line: " +dirname + " " + line);
         //common.ptod("prefix: " + prefix + " ||||||||| " + name);
 
         /* If this is a directory, scan it, unless it is a link: */
@@ -214,6 +232,7 @@ public class LS
           //common.ptod("line: " + line);
           LsData lsd = new LsData(prefix, dirname, name, line);
           detail_data.add(lsd);
+          size_added += lsd.ls_size;
         }
       }
 
@@ -236,7 +255,7 @@ public class LS
     {
       if (-- limit_lines > 0)
       {
-        if (data[i].size >= LS.minimum_report)
+        if (data[i].ls_size >= LS.minimum_report)
           System.out.println(data[i].getDetail());
       }
     }
@@ -271,7 +290,7 @@ class LsData implements Comparable, Serializable
   String dirname;
   String fname;
   String file_stuff;
-  long   size;
+  long   ls_size;
 
   public LsData(String ls_output, String dirname_in, String fname_in, String line)
   {
@@ -285,18 +304,18 @@ class LsData implements Comparable, Serializable
         common.ptod("Invalid data: " + ls_output);
         return;
       }
-      size = Long.parseLong(split[4]);
-      String sz = LS.xlateSize(size);
+      ls_size = Long.parseLong(split[4]);
+      String sz = LS.xlateSize(ls_size);
 
       if (!common.onWindows())
       {
         file_stuff = String.format("%-12s %3s %-8s %-8s %,16d %6s %3s %2s %5s ",
-                                   split[0], split[1], split[2], split[3], size, sz,
+                                   split[0], split[1], split[2], split[3], ls_size, sz,
                                    split[5], split[6], split[7]);
       }
       else
         file_stuff = String.format("%10s %3s %-4s %-4s %,12d %6s %3s %2s %5s ",
-                                   split[0], split[1], split[2], split[3], size, sz,
+                                   split[0], split[1], split[2], split[3], ls_size, sz,
                                    split[5], split[6], split[7]);
     }
     catch (Exception e)
@@ -326,7 +345,7 @@ class LsData implements Comparable, Serializable
       return tmp1.compareToIgnoreCase(tmp2);
     }
 
-    long delta = ls.size - size;
+    long delta = ls.ls_size - ls_size;
     if (delta > 0)
       return 1;
     else if (delta < 0)
@@ -379,7 +398,7 @@ class DirData  implements Comparable
       //common.ptod("adding dir_short: %d %s %s", split.length, dir_short, fname);
     }
 
-    dd.dir_total += lsd.size;
+    dd.dir_total += lsd.ls_size;
     dd.file_count ++;
 
     //if (lsd.dirname.startsWith(".\\solaris") )

@@ -23,7 +23,7 @@ class FsdEntry implements Cloneable
 
   public  String    name        = null;;
 
-  public  double[]  filesizes   = new double[] { 4096 };
+  public  double[]  filesizes   = new double[] { 4096};
 
   public FileAnchor anchor      = null;
   public String     dirname     = null;
@@ -50,9 +50,20 @@ class FsdEntry implements Cloneable
 
   public Dedup      dedup         = null;
 
+
+  public String     file_mask = "vdb_f%04d.file";
+  public String     dir_mask  = "vdb.%d_%d.dir";
+
+  public String     cloud_url  = null;
+  public String     cloud_user = null;
+  public String     cloud_pwd  = null;
+
+  public boolean    in_use;
+  public boolean    work_done;
+
   public static     int    max_fsd_name = 0;
 
-  private static    Vector fsd_list = new Vector(16);
+  private static    Vector <FsdEntry> fsd_list = new Vector(16);
   private static    FsdEntry dflt   = new FsdEntry();
 
 
@@ -88,7 +99,7 @@ class FsdEntry implements Cloneable
       names.put(fsd.name, fsd);
     }
 
-    return (String[]) names.keySet().toArray(new String[0]);
+    return(String[]) names.keySet().toArray(new String[0]);
   }
 
 
@@ -222,6 +233,28 @@ class FsdEntry implements Cloneable
         else if (prm.keyword.equals("log"))
           fsd.create_rw_log = prm.alphas[0].toLowerCase().startsWith("y");
 
+        else if (prm.keyword.equals("mask"))
+        {
+          fsd.file_mask = prm.alphas[0];
+          if (prm.alpha_count > 1)
+            fsd.dir_mask = prm.alphas[1];
+          if (!fsd.file_mask.startsWith("vdb"))
+            common.failure("The file 'mask=%s' value MUST start with 'vdb'", fsd.file_mask);
+          if (!fsd.file_mask.endsWith(".file"))
+            common.failure("The file 'mask=%s' value MUST end with '.file'", fsd.file_mask);
+          if (!fsd.dir_mask.startsWith("vdb"))
+            common.failure("The directory 'mask=%s' value MUST start with 'vdb'", fsd.dir_mask);
+          if (!fsd.dir_mask.endsWith(".dir"))
+            common.failure("The directory 'mask=%s' value MUST end with '.dir'", fsd.dir_mask);
+
+          if (fsd.file_mask.indexOf("%0") < 0)
+            common.failure("The file 'mask=%s' value MUST contain ONE printf '%%0xxx' mask", fsd.file_mask);
+
+          if (fsd.dir_mask.indexOf("%0") == fsd.dir_mask.lastIndexOf("%0"))
+            common.failure("The dir 'mask=%s' value MUST contain two '%%0xxx' printf masks", fsd.dir_mask);
+
+        }
+
         else if ("count".startsWith(prm.keyword))
         {
           if (prm.getNumCount() != 2)
@@ -244,6 +277,15 @@ class FsdEntry implements Cloneable
         {
           common.failure("FSD specific dedup parameters: some time in the future");
           //fsd.dedup.parseDedupParms(prm);
+        }
+
+        else if (prm.keyword.equals("cloud"))
+        {
+          if (prm.getAlphaCount() != 3)
+            common.failure("'cloud=(url,user,password)' requires three parameters");
+          fsd.cloud_url  = prm.alphas[0];
+          fsd.cloud_user = prm.alphas[1];
+          fsd.cloud_pwd  = prm.alphas[2];
         }
 
         else
@@ -480,8 +522,16 @@ class FsdEntry implements Cloneable
         for (int j = 0; j < fsd.fsdcount; j++)
         {
           FsdEntry fsd2 = (FsdEntry) fsd.clone();
-          fsd2.name    += (j + fsd.fsdstart);
-          fsd2.dirname += (j + fsd.fsdstart);
+
+          if (fsd.name.contains("%"))
+            fsd2.name    = String.format(fsd.name,    (j + fsd.fsdstart));
+          else
+            fsd2.name    += (j + fsd.fsdstart);
+
+          if (fsd.dirname.contains("%"))
+            fsd2.dirname = String.format(fsd.dirname, (j + fsd.fsdstart));
+          else
+            fsd2.dirname += (j + fsd.fsdstart);
 
           fsd2.fsdcount = 0;
           fsd_list.add(fsd2);
@@ -512,11 +562,10 @@ class FsdEntry implements Cloneable
   }
 
 
-  public static Object findFsd(String name)
+  public static FsdEntry findFsd(String name)
   {
-    for (int i = 0; i < fsd_list.size(); i++)
+    for (FsdEntry fsd : fsd_list)
     {
-      FsdEntry fsd = (FsdEntry) fsd_list.elementAt(i);
       if (fsd.name.equals(name))
         return fsd;
     }

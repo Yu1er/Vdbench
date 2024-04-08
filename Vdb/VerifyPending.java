@@ -68,6 +68,7 @@ public class VerifyPending
 
       if (flag != 0)
       {
+        /* I can no longer explain this message below. */
         if (first)
         {
           first = false;
@@ -75,6 +76,16 @@ public class VerifyPending
           ErrorLog.plog("Note that i/o still pending at the end of the previous "+
                         "run's NORMAL completion may be included here.");
           ErrorLog.plog("");
+        }
+
+        if (flag == DV_map.DV_ERROR)
+        {
+          ErrorLog.plog("Key block at lba 0x%08x. "+
+                        "This Block was marked in error, either due to a write failure "+
+                        "or due to a Data Validation error. Key block will not be touched again.",
+                        lba);
+          new_map.dv_set(lba, DV_map.DV_ERROR);
+          continue;
         }
 
         if (flag == DV_map.PENDING_KEY_0)

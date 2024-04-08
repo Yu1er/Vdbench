@@ -1,12 +1,12 @@
 package Utils;
-    
-/*  
- * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved. 
- */ 
-    
-/*  
- * Author: Henk Vandenbergh. 
- */ 
+
+/*
+ * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.
+ */
+
+/*
+ * Author: Henk Vandenbergh.
+ */
 
 import java.util.*;
 
@@ -15,8 +15,8 @@ import java.util.*;
  */
 public class NamedKstat
 {
-  private final static String c = 
-  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved."; 
+  private final static String c =
+  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.";
 
   /**
    * Get a kstat_ctl_t pointer to Kstat
@@ -43,22 +43,6 @@ public class NamedKstat
 
   public static void main(String[] args)
   {
-    /*
-    Swt.common.load_shared_library();
-
-    long kstat_ctl_t = kstat_open();
-
-    String data = kstat_lookup_stuff(kstat_ctl_t, "nfs", "rfsreqcnt_v3");
-
-    common.ptod("data: " + data);
-
-    StringTokenizer st = new StringTokenizer(data);
-    while (st.hasMoreTokens())
-    {
-      common.ptod(st.nextToken());
-    }
-
-    kstat_close(kstat_ctl_t);
-    */
   }
+
 }

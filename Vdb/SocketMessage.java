@@ -63,6 +63,8 @@ public class SocketMessage implements Serializable
   public static int READY_FOR_MORE_WORK        = 30;  //
   public static int ANCHOR_SIZES               = 31;  //
   public static int USER_DATA_TO_SLAVES        = 32;  //
+  public static int ONE_TIME_STATUS            = 33;  //          <
+  public static int STOP_NEW_IO                = 34;  //          <
 
 
   private static String[] text=
@@ -100,6 +102,8 @@ public class SocketMessage implements Serializable
     ,"READY_FOR_MORE_WORK       "
     ,"ANCHOR_SIZES              "
     ,"USER_DATA_TO_SLAVES       "
+    ,"ONE_TIME_STATUS           "
+    ,"STOP_NEW_IO               "
   };
 
   private static int seqno = 0;

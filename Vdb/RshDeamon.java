@@ -1,12 +1,12 @@
 package Vdb;
-    
-/*  
- * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved. 
- */ 
-    
-/*  
- * Author: Henk Vandenbergh. 
- */ 
+
+/*
+ * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.
+ */
+
+/*
+ * Author: Henk Vandenbergh.
+ */
 
 import java.util.*;
 import java.net.*;
@@ -20,8 +20,8 @@ import Utils.Fget;
  */
 class RshDeamon
 {
-  private final static String c = 
-  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved."; 
+  private final static String c =
+  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.";
 
   public static void waitForUsers()
   {
@@ -42,6 +42,7 @@ class RshDeamon
 
 
     /* Continuously accept new connections: */
+    common.ptod("Vdbench rsh daemon: waiting for new users");
     while (true)
     {
       /* Every x seconds tell user we're still waiting: */
@@ -51,6 +52,7 @@ class RshDeamon
       try
       {
         SlaveSocket socket = new SlaveSocket(serverSocket);
+        socket.setSlaveLabel("RshDeamon");
 
         /* We have a new client, hand him off to a separate thread: */
         RshUser ru = new RshUser();

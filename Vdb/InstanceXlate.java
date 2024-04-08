@@ -151,7 +151,7 @@ public class InstanceXlate
             instance.startsWith("xdf") ||
             instance.startsWith("xvf") ||
             instance.startsWith("zvblk") ||
-            instance.startsWith("cmdk") ||   // For XVM?
+            instance.startsWith("cmdk") ||   // For XVM? and VirtualBox.
             instance.startsWith("nfs")))
       {
         //common.ptod("simulateLibdev unknown: " + instance);

@@ -72,6 +72,7 @@ public class IO_task extends Thread
 
 
   private static boolean print_io_comp     = common.get_debug(common.PRINT_IO_COMP);
+  private static boolean fake_before       = common.get_debug(common.FAKE_TRACE_BEFORE);
   private static boolean fake_trace        = false;
 
   private static boolean remove_after_error = Validate.removeAfterError();
@@ -191,14 +192,22 @@ public class IO_task extends Thread
     if (obj instanceof SD_entry)
     {
       sd     = (SD_entry) obj;
-      sd.sd_error_count++;
       dv_map = sd.dv_map;
       lun    = sd.lun;
+      sd.sd_error_count++;
+      sd.sd_error_time = System.currentTimeMillis();
 
       /* A request to ignore the device after an i/o error? */
       if (remove_after_error)
-        ErrorLog.ptod("'data_errors=remove_device' requested for sd=" +
-                      sd.sd_name + " No longer issuing i/o against this SD");
+      {
+        if (Validate.getErrorSleep() > 0)
+          ErrorLog.ptod("'data_errors=remove_device' requested for sd=%s." +
+                        " SD will not receive any new work for %d seconds.",
+                        sd.sd_name, Validate.getErrorSleep());
+        else
+          ErrorLog.ptod("'data_errors=remove_device' requested for sd=%s." +
+                        " No longer issuing i/o against this SD.", sd.sd_name);
+      }
     }
 
     else if (obj instanceof ActiveFile)
@@ -212,7 +221,7 @@ public class IO_task extends Thread
     {
       lun = (String) obj;
       common.ptod("errno: " + errno);
-      common.ptod("lun: " + lun);
+      common.ptod("lun:   " + lun);
       common.ptod("Non-SD or FSD related i/o error: " + Errno.xlate_errno(errno));
       common.ptod("Unknown file handle. Continuing");
       //common.failure("io_error_report(): unexpected file handle returned: " + obj);
@@ -220,16 +229,18 @@ public class IO_task extends Thread
 
     /* New DV reporting is only done AFTER 60003 has been received. */
     /* If journal recovery finds that the block is fine, great.     */
+    BadSector bads = null;
     if (errno == 60003)
     {
-      //common.where(16);
       if (sd != null)
       {
+        bads = BadDataBlock.getFirstBadSector(sd, file_lba, 0);
         if (BadDataBlock.reportBadDataBlock(sd, file_lba, 0, buffer))
           return;
       }
       else
       {
+        bads = BadDataBlock.getFirstBadSector(afe, file_lba, afe.getFileEntry().getFileStartLba());
         if (BadDataBlock.reportBadDataBlock(afe, file_lba, afe.getFileEntry().getFileStartLba(), buffer))
           return;
       }
@@ -237,20 +248,42 @@ public class IO_task extends Thread
 
 
     /* Send error message to master: */
-    // DvPost may become obsolete
-    // DO NOT CHANGE, SEE DVPost()
-    String txt = String.format("%s op: %-6s lun: %-30s lba: %12d 0x%08X xfer: %8d errno: %s ",
-                               common.tod(),
+    /* This message will stay unchanged to support long time users. */
+    /* A new one-time notification on status.html will be added. */
+    String txt = String.format("op: %-6s lun: %-30s lba: %12d 0x%08X xfer: %8d errno: %s ",
                                (read) ? "read" : "write",
                                lun,
                                file_lba,
                                file_lba,
                                xfersize,
                                Errno.xlate_errno(errno));
-    ErrorLog.ptod(txt);
 
-    /* Keep track of the amount of errors (code will abort if needed): */
-    ErrorLog.countErrorsOnSlave(lun, file_lba, (int) xfersize);
+    ErrorLog.ptod(txt);
+    if (errno == 60003)
+      SlaveJvm.sendMessageToMaster(SocketMessage.ONE_TIME_STATUS, "Data corruption detected. See errorlog.html");
+    else
+      SlaveJvm.sendMessageToMaster(SocketMessage.ONE_TIME_STATUS, "I/O error detected. See errorlog.html");
+
+
+    /* It was requested to display the error messages BEFORE calling the script: */
+    if (Validate.getErrorCommand() != null)
+    {
+      if (errno == 60003)
+      {
+        ErrorLog.runErrorCommand(bads.lun, bads.file_lba, bads.sector_lba,
+                                 bads.data_blksize, String.format("0x%04x", bads.error_flag));
+      }
+      else
+      {
+        ErrorLog.runErrorCommand(lun, file_lba, -1, xfersize, (read) ? "r" : "w");
+      }
+    }
+
+
+
+    /* The master keeps track of error count: */
+    /* (Note that runErrorCommand() above aborts if called) */
+    ErrorLog.countErrorsOnSlave(1);
 
     /* When data validation is active, mark the block bad: */
     if (Validate.isValidate())
@@ -262,10 +295,16 @@ public class IO_task extends Thread
         /* or shall I mark the whole data block in error.                     */
         /* Non-corruption errors of course need the WHOLE block to be marked. */
         /* Solution for now: always the whole data block.                     */
-        if (obj instanceof SD_entry)
+        if (sd != null)
         {
           KeyMap key_map = new KeyMap(0l, sd.getKeyBlockSize(),
                                       SlaveWorker.work.maximum_xfersize);
+          key_map.markDataBlockBad(dv_map, file_lba);
+        }
+
+        else if (afe != null)
+        {
+          KeyMap key_map = afe.getKeyMap();
           key_map.markDataBlockBad(dv_map, file_lba);
         }
       }
@@ -319,12 +358,30 @@ public class IO_task extends Thread
           if (SlaveJvm.isWorkloadDone())
             break;
 
+          if (SlaveJvm.stoppingWork())
+          {
+            common.sleep_some(5*60*1000);
+
+            // interrupt via common.failure likely hits this first:
+            //common.failure("User requested halt to work 5 minutes ago. Timeout.");
+            return;
+          }
+
           if (cmd_array[0].delta_tod == Long.MAX_VALUE)
             break;
 
           /* A request to ignore the device after an i/o error? */
           if (remove_after_error && sd.sd_error_count > 0)
+          {
+            /* After 'n' seconds we will reset this error count: */
+            int error_ms = Validate.getErrorSleep() * 1000;
+            if (error_ms > 0)
+            {
+              if (System.currentTimeMillis() - sd.sd_error_time > error_ms)
+                sd.sd_error_count = 0;
+            }
             continue;
+          }
 
           // To test skip_after_io_error
           //if (remove_after_error && sd.sd_name.equals("sd1"))
@@ -384,6 +441,10 @@ public class IO_task extends Thread
    */
   private boolean processSingleIO(Cmd_entry cmd)
   {
+    /* For debugging, see ShowLba.java: */
+    if (fake_before && fake_trace)
+      ShowLba.writeRecord(cmd);
+
     /* Optional user processing needed? */
     if (cmd.cmd_wg.user_class != null)
     {
@@ -450,9 +511,8 @@ public class IO_task extends Thread
 
 
       /* All the rest below requires serious data buffer work and is done here: */
-
       /* Tell KeyMap about this data block: */
-      if (!key_map.storeDataBlockInfo(cmd.cmd_lba, cmd.cmd_xfersize, cmd.sd_ptr.dv_map))
+      if (key_map.storeDataBlockInfo(cmd.cmd_lba, cmd.cmd_xfersize, cmd.sd_ptr.dv_map))
       {
         /* One or more key blocks of this data block are in error. */
         /* We should never get here since checks are done earlier: */
@@ -501,7 +561,7 @@ public class IO_task extends Thread
       cmd.cmd_print("print_io_comp2");
 
     /* For debugging, see ShowLba.java: */
-    if (fake_trace)
+    if (!fake_before && fake_trace)
       ShowLba.writeRecord(cmd);
 
     return true;
@@ -520,7 +580,7 @@ public class IO_task extends Thread
       key_map.setSdCompressionOnlyOffset(cmd.cmd_lba);
 
     /* If block is already in error, return.  We will never touch that block again. */
-    if (Validate.isRealValidate() && !key_map.storeDataBlockInfo(cmd.cmd_lba, cmd.cmd_xfersize, cmd.sd_ptr.dv_map))
+    if (Validate.isRealValidate() && key_map.storeDataBlockInfo(cmd.cmd_lba, cmd.cmd_xfersize, cmd.sd_ptr.dv_map))
       return;
 
 
@@ -538,11 +598,11 @@ public class IO_task extends Thread
       readAndValidateBlock(cmd);
 
       if (cmd.type_of_dv_read == Validate.FLAG_PENDING_READ)
-        saveLastTod(Timestamp.PENDING_READ);
+        saveCurrentTod(Timestamp.PENDING_READ);
       else if (cmd.type_of_dv_read == Validate.FLAG_PENDING_REREAD)
-        saveLastTod(Timestamp.PENDING_REREAD);
+        saveCurrentTod(Timestamp.PENDING_REREAD);
       else
-        saveLastTod(Timestamp.READ_ONLY);
+        saveCurrentTod(Timestamp.READ_ONLY);
 
 
       /* We must unbusy the map, but during journal recovery the key may have changed: */
@@ -550,8 +610,10 @@ public class IO_task extends Thread
       {
         if (cmd.type_of_dv_read == Validate.FLAG_PENDING_READ)
         {
-          if (!key_map.storeDataBlockInfo(cmd.cmd_lba, cmd.cmd_xfersize, cmd.sd_ptr.dv_map))
-            common.failure("Unexpected key block state for lba 0x%08x", cmd.cmd_lba);
+          /* State check removed due to state possibly changing during journal recovery */
+          key_map.storeDataBlockInfo(cmd.cmd_lba, cmd.cmd_xfersize, cmd.sd_ptr.dv_map);
+          //if (!key_map.storeDataBlockInfo(cmd.cmd_lba, cmd.cmd_xfersize, cmd.sd_ptr.dv_map))
+          //  common.failure("Unexpected key block state for lba 0x%08x", cmd.cmd_lba);
         }
         key_map.storeKeys();
       }
@@ -564,7 +626,7 @@ public class IO_task extends Thread
     {
       cmd.type_of_dv_read = Validate.FLAG_PRE_READ;
       readAndValidateBlock(cmd);
-      saveLastTod(Timestamp.PRE_READ);
+      saveCurrentTod(Timestamp.PRE_READ);
       if (rc != 0)
       {
         key_map.storeKeys();
@@ -572,19 +634,23 @@ public class IO_task extends Thread
       }
     }
 
+    if (SlaveJvm.stoppingWork())
+      return;
+
     /* Do a write with required data patterns, including DV: */
-    patternWrite(cmd);
-    saveLastTod(Timestamp.WRITE);
+    long tod = patternWrite(cmd);
+    saveLastTod(Timestamp.WRITE, tod);
+    key_map.saveWriteXfer((int) cmd.cmd_xfersize);
 
     /* After a write (and maybe journal write) is done update the keys in the DV_map: */
     if (Validate.isRealValidate() || Validate.isValidateForDedup())
     {
       /* Skip read-immediate if the write failed: */
-      if (rc == 0 && Validate.isImmediateRead())
+      if (rc == 0 && Validate.isImmediateRead() && !SlaveJvm.stoppingWork())
       {
         cmd.type_of_dv_read = Validate.FLAG_READ_IMMEDIATE;
         readAndValidateBlock(cmd);
-        saveLastTod(Timestamp.READ_IMMED);
+        saveCurrentTod(Timestamp.READ_IMMED);
       }
 
       /* storeKeys() also unbusies the blocks: */
@@ -619,7 +685,7 @@ public class IO_task extends Thread
     /* This call reads and validates 'n' key blocks: */
     rc = Native.multiKeyReadAndValidateBlock(cmd.sd_ptr.fhandle,
                                              data_flag | cmd.type_of_dv_read,
-                                             0,
+                                             0,          // file_start_lba
                                              cmd.cmd_lba,
                                              (int) cmd.cmd_xfersize,
                                              read_buffer,
@@ -651,7 +717,7 @@ public class IO_task extends Thread
 
       /* BadKeyBlock can have modified the key. Get the new value: */
       /* If the block is now in error, or now unknown, skip:       */
-      if (!key_map.storeDataBlockInfo(cmd.cmd_lba, cmd.cmd_xfersize, cmd.sd_ptr.dv_map) ||
+      if (key_map.storeDataBlockInfo(cmd.cmd_lba, cmd.cmd_xfersize, cmd.sd_ptr.dv_map) ||
           !key_map.anyDataToCompare())
       {
         rc = 0;
@@ -705,14 +771,14 @@ public class IO_task extends Thread
   /**
    * Write with required data patterns, including DV.
    */
-  private void patternWrite(Cmd_entry cmd)
+  private long patternWrite(Cmd_entry cmd)
   {
     /* Increment the keys so that we can write:      */
     /* (A block with an error will NOT be rewritten) */
     if (Validate.isValidate() && !key_map.incrementKeys())
     {
       common.where();
-      return;
+      return 0;
     }
 
     /* Write pre-keys to Journal file: */
@@ -740,6 +806,7 @@ public class IO_task extends Thread
     long tod = (Validate.isRealValidate()) ? System.currentTimeMillis() : 0;
     rc = 0;
 
+    tod = (Validate.isValidate()) ? System.currentTimeMillis() : 0; //wen:added
 
     //  for (int i = 0; i < key_map.getKeyCount(); i++)
     //  {
@@ -750,6 +817,16 @@ public class IO_task extends Thread
     /* When this triggers during a write of a duplicate, nobody will notice! */
     if (!HelpDebug.doAfterCount("skipWriteAfter"))
     {
+      /* This is available only on Windows: */
+      if (HelpDebug.doAfterModulo("simulateSdWriteError"))
+        cmd.cmd_lba |= 0x02;
+
+      boolean short_write = false;
+      if (HelpDebug.doAfterCount("writeShortBlock"))
+      {
+        short_write = true;
+        cmd.cmd_xfersize /= 2;
+      }
       rc  = Native.multiKeyFillAndWriteBlock(cmd.sd_ptr.fhandle,
                                              tod,
                                              data_flag,               // int
@@ -765,7 +842,15 @@ public class IO_task extends Thread
                                              key_map.getDedupsets(),
                                              cmd.sd_ptr.sd_name8,
                                              cmd.jni_index);
+      if (common.get_debug(common.FSYNC_AFTER_WRITE))
+        Native.fsync(cmd.sd_ptr.fhandle);
+      if (short_write)
+        System.exit(777);
     }
+
+    if (Dedup.isDuplicate(key_map.getDedupsets()[0]) &&
+        HelpDebug.doAfterCount("corruptAfterWriteDup"))
+      HelpDebug.corruptBlock(cmd.sd_ptr.fhandle, (int) cmd.cmd_xfersize, cmd.cmd_lba);
 
     if (HelpDebug.doAfterCount("corruptAfterWrite"))
       HelpDebug.corruptBlock(cmd.sd_ptr.fhandle, (int) cmd.cmd_xfersize, cmd.cmd_lba);
@@ -773,7 +858,7 @@ public class IO_task extends Thread
     if (HelpDebug.doForLba("corruptLbaAfterWrite", cmd.cmd_lba, cmd.cmd_xfersize))
     {
       HelpDebug.corruptBlock(cmd.sd_ptr.fhandle, (int) cmd.cmd_xfersize, cmd.cmd_lba);
-      common.failure("corruptLbaAfterWrite");
+      //common.failure("corruptLbaAfterWrite");
     }
 
     /* When the write failed writeAfterJournalImage() will skip the journal write: */
@@ -783,6 +868,8 @@ public class IO_task extends Thread
 
     /* Count the number of key blocks written: */
     key_map.countRawWrites(cmd.sd_ptr, cmd.cmd_lba);
+
+    return tod;
   }
 
 
@@ -870,12 +957,16 @@ public class IO_task extends Thread
    * Optionally save the last tod this block was read/written.
    * This of course is ONLY for Data Validation.
    */
-  private void saveLastTod(long type)
+  private void saveCurrentTod(long type)
   {
     if (!Validate.isStoreTime())
       return;
+    saveLastTod(type, System.currentTimeMillis());
+  }
+  private void saveLastTod(long type, long tod)
+  {
     if (rc == 0)
-      key_map.saveTimestamp(type);
+      key_map.saveTimestamp(type, tod);
   }
 
   public static void main(String[] args)

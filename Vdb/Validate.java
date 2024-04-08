@@ -32,16 +32,19 @@ public class Validate implements java.io.Serializable
   private boolean validate_immed     = false;
   private boolean validate_nopreread = false;
   private boolean validate_time      = false;
+  private boolean validate_xfer      = false;
 
   private boolean continue_old_map   = false;
   private boolean ignore_zero_reads  = false;
   private boolean skip_data_read     = false;
+  private boolean report_dedupsets   = false;
 
   private boolean ignore_pending     = false;
 
   private int     maximum_dv_wait    = 0;
   private int     maximum_dv_errors  = 50;
   private String  dv_error_cmd       = null;
+  private int     dv_error_sleep     = 0;
   private String  output_dir         = null;
 
   private double  compression        = 1;
@@ -73,6 +76,9 @@ public class Validate implements java.io.Serializable
   public static int FLAG_READ_IMMEDIATE  = 0x0400;
   public static int FLAG_PENDING_READ    = 0x0800;
   public static int FLAG_PENDING_REREAD  = 0x1000;
+
+  /* These are merely for debugging: */
+  public static int FLAG_FAIL_WRITE      = 0x10000;
 
   public static String REMOVE_DEVICE_OPTION = "remove_device";
 
@@ -209,6 +215,15 @@ public class Validate implements java.io.Serializable
     options.validate_immed = true;
   }
 
+  public static void setXferHistory()
+  {
+    options.validate_xfer = true;
+  }
+  public static boolean isXferHistory()
+  {
+    return options.validate_xfer;
+  }
+
   public static void setNoPreRead()
   {
     options.validate_nopreread = true;
@@ -308,6 +323,10 @@ public class Validate implements java.io.Serializable
   public static int getMaxErrorCount()
   {
     return options.maximum_dv_errors;
+  }
+  public static int getErrorSleep()
+  {
+    return options.dv_error_sleep;
   }
 
   public static void setOutput(String d)
@@ -450,6 +469,12 @@ public class Validate implements java.io.Serializable
       else if ("read_after_write".startsWith(parm))
         Validate.setImmediateRead();
 
+      else if ("xfersize".startsWith(parm))
+      {
+        Validate.setStoreTime();
+        Validate.setXferHistory();
+      }
+
       else if ("no_preread".startsWith(parm))
         Validate.setNoPreRead();
 
@@ -458,6 +483,12 @@ public class Validate implements java.io.Serializable
 
       else if ("ignore_zero_reads".startsWith(parm))
         options.ignore_zero_reads = true;
+
+      else if ("reportdedupsets".startsWith(parm))
+      {
+        options.report_dedupsets = true;
+        Validate.setStoreTime();
+      }
 
       else
         common.failure("Unknown keyword value for 'validate=': " + parm);
@@ -480,8 +511,12 @@ public class Validate implements java.io.Serializable
       options.dv_error_cmd      = prm.alphas[0];
 
       /* Option to stop using SD after i/o error: */
-      if (REMOVE_DEVICE_OPTION.startsWith(options.dv_error_cmd))
+      if (options.dv_error_cmd.startsWith("remove"))
       {
+        String[] split = prm.alphas[0].split("=");
+        if (split.length > 1)
+          options.dv_error_sleep = Integer.parseInt(split[1]);
+
         options.dv_error_cmd      = REMOVE_DEVICE_OPTION;
         options.maximum_dv_errors = 10000;
         common.ptod("'data_errors=%s' option requested. Max error count set to %d",
@@ -576,6 +611,11 @@ public class Validate implements java.io.Serializable
   public static boolean showLba()
   {
     return options.showlba;
+  }
+
+  public static boolean reportDedupsets()
+  {
+    return options.report_dedupsets;
   }
 }
 

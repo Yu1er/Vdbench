@@ -124,6 +124,11 @@ public class RshUser extends ThreadControl
                            {
                              int num = (type.equals("stdout")) ? SocketMessage.RSH_STDOUT_OUTPUT : SocketMessage.RSH_STDERR_OUTPUT;
                              SocketMessage sm = new SocketMessage(num, line);
+
+                             /* If we found an error on the socket, don't bother: */
+                             if (socket_to_user.isShutdown())
+                               return false;
+
                              //common.ptod("newLine: " + line);
 
                              return socket_to_user.putMessage(sm);

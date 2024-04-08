@@ -109,6 +109,11 @@ public class SlaveWorker extends ThreadControl
       if (SlaveJvm.isFirstSlaveOnHost())
         work.rd_start_command.run_command();
 
+      /* This is a one-time call if we use cloud stuff: */
+      if (SlaveJvm.isFirstSlaveOnHost() && work.nw_monitor_needed)
+        NwStats.getAdapters();
+
+
       // Experiment
       if (false && common.onSolaris())
       {
@@ -183,13 +188,9 @@ public class SlaveWorker extends ThreadControl
     Cmd_entry.cmd_create_pool();
 
     /* Start or recover journal if requested.  */
-    Jnl_entry.recoverSDJournalsIfNeeded(sd_list);
+    if (Validate.isRealValidate())
+      Jnl_entry.recoverSDJournalsIfNeeded(sd_list);
 
-    //if (Validate.isJournalRecovery())
-    //{
-    //  common.where(8);
-    //  return;
-    //}
 
     /* Data validation may need some tables: */
     if (Validate.isValidate())
@@ -254,7 +255,8 @@ public class SlaveWorker extends ThreadControl
     SlaveJvm.waitToGo();
 
     /* Tell WG_task threads to go ahead and start working: */
-    ShowLba.openTrace();
+    if (Validate.showLba())
+      ShowLba.openTrace();
     Task_num.task_run_all();
 
     /* Now wait for the 'workload done' signal: */
@@ -264,14 +266,20 @@ public class SlaveWorker extends ThreadControl
     Task_num.interrupt_tasks("WT_task");
     sendInterrupts();
 
+    /* A timeout will be sent to the master and we'll wait for an abort: */
     int timed_out = Task_num.task_wait_all();
     if (timed_out > 0)
-      common.failure("Shutdown took more than " + timed_out + " minutes; Run aborted");
+    {
+      ErrorLog.countErrorsOnSlave( (timed_out > 1) ? timed_out : 2);
+      common.sleep_some(10000);
+      common.failure("Shutdown took more than " + timed_out + " seconds; Run aborted");
+    }
     Task_num.task_list_clear();
 
     /* Note that these closes can take a bit if flush() is implied! */
     SD_entry.closeAllSds();
-    ShowLba.closeTrace();
+    if (Validate.showLba())
+      ShowLba.closeTrace();
 
     /* Cleanup maps and journals: */
     if (Validate.isValidate())
@@ -312,9 +320,14 @@ public class SlaveWorker extends ThreadControl
     /* May never be done. See comments in Task_num.interrupt_tasks() */
     //Task_num.interrupt_tasks("FwgThread");
 
+    /* A timeout will be sent to the master and we'll wait for an abort: */
     int timed_out = Task_num.task_wait_all();
     if (timed_out > 0)
-      common.failure("Shutdown took more than " + timed_out + " minutes; Run aborted");
+    {
+      ErrorLog.countErrorsOnSlave( (timed_out > 1) ? timed_out : 2);
+      common.sleep_some(10000);
+      common.failure("Shutdown took more than " + timed_out + " seconds; Run aborted");
+    }
     Task_num.task_list_clear();
 
     /* Dump all possible journals. Don't dump them if there was any error. */

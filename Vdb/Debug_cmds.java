@@ -14,6 +14,7 @@ import java.io.Serializable;
 import java.util.*;
 
 import Utils.CommandOutput;
+import Utils.Fget;
 import Utils.OS_cmd;
 
 
@@ -25,9 +26,11 @@ class Debug_cmds implements Serializable, Cloneable
   private final static String c =
   "Copyright (c) 2000, 2016, Oracle and/or its affiliates. All rights reserved.";
 
-  private Vector commands = new Vector(1);
+  private Vector <String> commands = new Vector(1);
   private String target   = "log";
   private boolean master  = false;
+  private boolean abort   = false;
+  private HashMap <String, String>  hosts   = new HashMap(8);
 
   public static Debug_cmds starting_command = new Debug_cmds();
   public static Debug_cmds ending_command   = new Debug_cmds();
@@ -35,6 +38,10 @@ class Debug_cmds implements Serializable, Cloneable
 
   public Debug_cmds storeCommands(String[] parms)
   {
+    /* rd=default must CLEAR the list of commands, making this a REPLACE, not an ADD: */
+    if (this == RD_entry.dflt.start_cmd || this == RD_entry.dflt.end_cmd)
+      commands.clear();
+
     for (int i = 0; i < parms.length; i++)
     {
       String parm = parms[i];
@@ -44,6 +51,10 @@ class Debug_cmds implements Serializable, Cloneable
         master = true;
       else if (parm.equalsIgnoreCase("slave"))
         master = false;
+      else if (parm.equalsIgnoreCase("abort"))
+        abort = true;
+      else if (Host.isHostKnown(parm))
+        hosts.put(parm, parm);
       else
       {
         parm = common.replace_string(parm, "$output", Vdbmain.output_dir);
@@ -92,20 +103,25 @@ class Debug_cmds implements Serializable, Cloneable
     if (SlaveJvm.isThisSlave() && master)
       return true;
 
-    for (int i = 0; i < commands.size(); i++)
+    for (String use_command : commands)
     {
-      String use_command = (String) commands.elementAt(i);
+      String[] split      = use_command.split(" +", 2);
+      String   prefix     = split[0];
+      String   suffix     = (split.length > 1) ? split[1] : "";
+      String   found_file = common.findscript(prefix);
 
-      /* Get the first word of the command. If it is in the shared library, call that: */
-      String[] split = use_command.split(" +");
-      if (new File(common.get_shared_lib() + File.separator + split[0]).exists())
-      {
-        use_command = common.get_shared_lib() + File.separator + split[0];
-        for (int j = 1; j < split.length; j++)
-          use_command += " " + split[j];
-      }
+      /* If the command exists, leave it alone, otherwise use what we found:    */
+      /* If it does not exist, then just execute and have the user deal with it */
+      if (!Fget.file_exists(prefix) && found_file != null)
+        prefix = found_file;
+
+      /* We can now rebuild the command: */
+      use_command = prefix + " " + suffix;
 
       common.ptod("Start/end command: executing '" + use_command + "'");
+      if (SlaveJvm.isThisSlave())
+        SlaveJvm.sendMessageToConsole("Start/end command: executing '" + use_command + "'");
+
       OS_cmd ocmd = new OS_cmd();
       ocmd.addText(use_command);
 
@@ -159,6 +175,9 @@ class Debug_cmds implements Serializable, Cloneable
                            });
 
       ocmd.execute(true);
+
+      if (abort && !ocmd.getRC())
+        common.failure("Startcmd= or endcmd= call failed. Abort has been requested.");
     }
 
     return true;

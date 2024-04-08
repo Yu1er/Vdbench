@@ -73,8 +73,8 @@ public class FileAnchor extends Directory implements Serializable
 
   // Maybe some day change these to ArrayList?
   private Vector <FileEntry> file_list = null; /* List of FileEntry instances */
-  private Vector use_list  = null;             /* List of (totalsize=)        */
-  private Vector wss_list  = null;             /* Same, only for active WSS   */
+  private Vector <FileEntry> use_list  = null; /* List of (totalsize=)        */
+  private Vector <FileEntry> wss_list  = null; /* Same, only for active WSS   */
 
   public  long   bytes_in_file_list = 0;  /* What we have in file_list        */
   private long   bytes_in_use_list  = 0;  /* What we have in use_list         */
@@ -102,6 +102,9 @@ public class FileAnchor extends Directory implements Serializable
   public  boolean create_rw_log = false;
   public  Fput    rw_log = null;
 
+  public String   file_mask = null;
+  public String   dir_mask  = null;
+
   public HashMap <Long, BadDataBlock>  bad_data_map     = null;
 
   public  Dedup   dedup = null;
@@ -110,6 +113,8 @@ public class FileAnchor extends Directory implements Serializable
   /* found during journal recovery:                                     */
   public HashMap   <FileEntry, HashMap <Long, Long> > pending_file_lba_map = null;
   public ArrayList <FileEntry>                        pending_files        = null;
+
+  public CurlHandling curl = null;
 
   private static HashMap <String, Fput> open_rwlog_map = new HashMap(8);
 
@@ -159,6 +164,8 @@ public class FileAnchor extends Directory implements Serializable
     anchor.jnl_dir_name  = fsd.jnl_dir_name;
     anchor.dist          = fsd.dist;
     anchor.create_rw_log = fsd.create_rw_log;
+    anchor.file_mask     = fsd.file_mask;
+    anchor.dir_mask      = fsd.dir_mask;
     anchor_list.addElement(anchor);
 
     /* For DV we need to know the name of the active FSD: */
@@ -183,11 +190,18 @@ public class FileAnchor extends Directory implements Serializable
    */
   public void initializeFileAnchor(FwgEntry fwg)
   {
+
     time_initialized = common.tod();
 
     /* Randomizer must have fixed seed. In that way when we expand the */
     /* file list we get the same sizes as before. */
     file_size_randomizer = new Random(0); /* Always fixed seed! */
+
+    /* File selection randomizer must be re-seeded. Though the same randomizer    */
+    /* is used, each RD gets a fresh copy from the master with the same old seed. */
+    /* Bad......                                                                  */
+    file_select_randomizer = new Random();
+
 
     file_sharing = fwg.file_sharing;
 
@@ -278,7 +292,20 @@ public class FileAnchor extends Directory implements Serializable
     createFileList(this, dir_list, fwg);
 
     /* Create a list with a subset of these file for totalsize= purposes: */
-    createUsedList();
+    createUsedList(fwg);
+    if (use_list != null)
+    {
+      if (use_list.size() == 0)
+      {
+        SlaveJvm.sendMessageToConsole("createUsedList could not find any available "+
+                                      "files using the current file selection options.");
+        SlaveJvm.sendMessageToConsole("This Run Definition will be skipped.\n");
+        SlaveJvm.setWorkloadDone(true);
+        return;
+      }
+      else
+        common.ptod("Generated a use list of %d files", use_list.size());
+    }
 
     /* Create a list with a subset of these file for WSS= purposes: */
     if (!SlaveWorker.work.format_run)
@@ -322,6 +349,31 @@ public class FileAnchor extends Directory implements Serializable
     /* We may need to do a little setup work here: */
     if (common.get_debug(common.CREATE_READ_WRITE_LOG))
       setupReadWriteLog(fwg.fsd_name);
+
+    if (curl != null)
+    {
+      synchronized(curl)
+      {
+        curl.getAuthorization();
+        curl.listContainer();
+      }
+    }
+
+    /* Setup the optional random starting point for fileselect=seqnz: */
+    if (!SlaveWorker.work.format_run && !fwg.selseq_start0)
+    {
+      Vector list_to_use;
+      if (wss_list != null)
+        list_to_use = wss_list;
+      else if (use_list != null)
+        list_to_use = use_list;
+      else
+        list_to_use = file_list;
+
+      Random seq_start_randomizer = new Random();
+      round_robin_files = seq_start_randomizer.nextInt(list_to_use.size());
+    }
+    //common.ptod("round_robin_files: %5b %5d", SlaveWorker.work.format_run, round_robin_files);
   }
 
 
@@ -482,20 +534,22 @@ public class FileAnchor extends Directory implements Serializable
           continue;
 
         /* Create the FileEntry: */
-        FileEntry fe = new FileEntry(dir, j+1, file_size,
+        /* (Changing the file numbering will require a change from %05d to %6d ???  (1 million)*/
+        FileEntry fe = new FileEntry(dir, file_size,
                                      (dedup) ? bytes_in_file_list : bytes_in_file_list,
                                      file_list.size());
-        //common.ptod("fe: " + fe.getFullName() + " " + file_size);
+
         file_list.add(fe);
+        //common.ptod("fe: " + fe.getFullName() + " " + file_list.size());
         created_file_count++;
 
-        if (created_file_count % (10 * 1000 * 1000l) == 0) // && signal.go())
+        if (created_file_count % (5 * 1000 * 1000l) == 0) // && signal.go())
         {
           //common.memory_usage();
           common.ptod("Generated %,d file names; total anchor size: %s",
                       created_file_count, whatSize(bytes_in_file_list));
           SlaveJvm.sendMessageToConsole("Continuing the creation of internal "+
-                                        "file structure for anchor=%s: %,d files.",
+                                        "file structure for anchor=%s: %,12d files.",
                                         getAnchorName(), created_file_count);
         }
 
@@ -549,49 +603,78 @@ public class FileAnchor extends Directory implements Serializable
    * This allows us to start with the creation of a smaller subset of the files
    * and then grow/shrink that subset later.
    */
-  private void createUsedList()
+  private void createUsedList(FwgEntry fwg)
   {
     use_list = null;
+
+
+    /* When fileselect empty/full/notfull is used create a subset list first: */
+    Vector <FileEntry> work_list = file_list;
+    long bytes_in_worklist = bytes_in_file_list;
+    if (fwg.select_full || fwg.select_empty || fwg.select_nfull)
+    {
+      bytes_in_worklist = 0;
+      work_list = new Vector(16384);
+      for (FileEntry fe : file_list)
+      {
+        if (!checkFileStatus(fe, fwg))
+          continue;
+        bytes_in_worklist += fe.getCurrentSize();
+        work_list.add(fe);
+      }
+
+      /* If no further selection is needed we're done: */
+      if (total_size == 0 || total_size == Long.MAX_VALUE)
+      {
+        use_list = work_list;
+        return;
+      }
+    }
+
+
+    /* No selection at all: done. */
     if (total_size == 0 || total_size == Long.MAX_VALUE)
       return;
 
-    if (total_size != Long.MAX_VALUE && total_size > bytes_in_file_list)
+
+
+    if (total_size != Long.MAX_VALUE && total_size > bytes_in_worklist)
       common.failure("A totalsize has been requested that is "+
                      "larger than the currently defined size for this anchor. "+
                      "\n\t\ttotalsize=" + whatSize(total_size) + " anchor size: " +
-                     whatSize(bytes_in_file_list));
+                     whatSize(bytes_in_worklist));
 
-    // obsolete
-    for (int i = Integer.MAX_VALUE; i < file_list.size(); i++)
-    {
-      FileEntry fe = (FileEntry) file_list.elementAt(i);
-      if (fe.isBusy())
-        common.failure("still files busy: " + fe.getFullName());
-    }
 
     /* Randomly select files, up to the total working set size: */
     /* (Fixed seed) */
-    bytes_in_use_list = 0;
-    long busy_blocks  = 0;
-    int  files_found  = 0;
-    existing_files    = 0;
-    full_file_count   = 0;
+    long busy_blocks   = 0;
+    int  files_found   = 0;
+    bytes_in_use_list  = 0;
+    existing_files     = 0;
+    full_file_count    = 0;
     Random subset_random = new Random(0);
     while (bytes_in_use_list < total_size)
     {
-      int number = (int) (subset_random.nextDouble() * file_list.size());
-      FileEntry fe = (FileEntry) file_list.elementAt(number);
+      int number = (int) (subset_random.nextDouble() * work_list.size());
+      FileEntry fe = work_list.elementAt(number);
       if (fe == null)
         common.failure("Unable to create a totalsize= subset for anchor=" + getAnchorName());
+
 
       /* Set busy to prevent the file from being selected twice: */
       if (!fe.setFileBusyExc())
       {
         /* Loop protection. More than 100,000 consecutive busies: */
+        /* However, if no total_size was requested now can consider ourselves 'done': */
         if (busy_blocks++ > 100000)
+        {
+          if (total_size == Long.MAX_VALUE)
+            break;
+
           common.failure("Unable to create a totalsize= subset for anchor="+
                          getAnchorName() + "; Too many busy blocks. " +
                          whatSize(bytes_in_use_list) + " " + files_found);
+        }
         continue;
       }
 
@@ -607,16 +690,13 @@ public class FileAnchor extends Directory implements Serializable
         full_file_count++;
     }
 
-    /* Allocate an estimated Vector size: */
-    int list_size = (int) (total_size / bytes_in_file_list * file_list.size());
-    Vector subset_list = new Vector(list_size);
-
     /* Now pick up any busy FileEntry and put it in the new list. */
     /* (This eliminates the need to do a sort on the file names), */
     /* (the original list is already in the proper order)         */
-    for (int i = 0; i < file_list.size(); i++)
+    Vector <FileEntry> subset_list = new Vector(16384);
+    for (int i = 0; i < work_list.size(); i++)
     {
-      FileEntry fe = (FileEntry) file_list.elementAt(i);
+      FileEntry fe = (FileEntry) work_list.elementAt(i);
       if (fe.isBusy())
       {
         fe.setUnBusy();
@@ -624,16 +704,13 @@ public class FileAnchor extends Directory implements Serializable
       }
     }
 
-    for (int i = Integer.MAX_VALUE; i < subset_list.size(); i++)
-    {
-      FileEntry fe = (FileEntry) subset_list.elementAt(i);
-      common.ptod("fe2: " + fe.getFullName());
-    }
+    //for (FileEntry fe : subset_list)
+    //  common.ptod("included: " + fe.getFullName());
 
-    SlaveJvm.sendMessageToConsole("Created totalsize=%6s using %,12d of %,12d files for anchor=%s",
+    SlaveJvm.sendMessageToConsole("Created totalsize= %6s using %,12d of %,12d files for anchor=%s",
                                   whatSize1(total_size),
                                   subset_list.size(),
-                                  file_list.size(),
+                                  work_list.size(),
                                   getAnchorName());
 
     if (subset_list.size() == 0)
@@ -643,6 +720,33 @@ public class FileAnchor extends Directory implements Serializable
   }
 
 
+
+  private boolean checkFileStatus(FileEntry fe, FwgEntry fwg)
+  {
+    //common.ptod("fwg.select_empty: " + fwg.select_empty + " " + fwg.select_full + " " + fwg.select_nfull);
+    if (fwg.select_empty)
+    {
+      boolean empty = !fe.exists() || fe.getCurrentSize() == 0;
+      //common.ptod("checkFileStat select_empty: %s %b", fe, empty);
+      return empty;
+    }
+
+    if (fwg.select_full)
+    {
+      boolean full = fe.isFull();
+      //common.ptod("checkFileStat select_full: %s %b", fe, full);
+      return full;
+    }
+
+    if (fwg.select_nfull)
+    {
+      boolean nfull = !fe.isFull();
+      //common.ptod("checkFileStat select_nfull: %s %b", fe, nfull);
+      return nfull;
+    }
+
+    return true;
+  }
 
 
 
@@ -662,6 +766,18 @@ public class FileAnchor extends Directory implements Serializable
 
     Vector list_to_use   = (use_list == null) ? file_list : use_list;
     long   bytes_in_list = (use_list == null) ? bytes_in_file_list : bytes_in_use_list;
+    boolean lefovers    = working_set < 0;
+    if (lefovers)
+      working_set *= -1;
+
+    /* WSS < 100 means: take percentage.                                     */
+    /* This first one means: WSS size equal to structure size or total_size. */
+    /* That is already how it works. But hey, the customer is king           */
+    if (working_set == 100)
+      working_set = bytes_in_list;
+
+    if (working_set < 100)
+      working_set = bytes_in_list * working_set / 100;
 
     if (working_set > bytes_in_list)
       common.failure("A working set size has been requested that is larger than "+
@@ -715,8 +831,11 @@ public class FileAnchor extends Directory implements Serializable
       if (fe.isBusy())
       {
         fe.setUnBusy();
-        subset_list.add(fe);
+        if (!lefovers)
+          subset_list.add(fe);
       }
+      else if (lefovers)
+        subset_list.add(fe);
     }
 
     //String txt = "Created workingset=" + whatSize(working_set) +
@@ -777,219 +896,64 @@ public class FileAnchor extends Directory implements Serializable
   }
 
 
-
-  /**
-   * (Recursively) read directory.
-   * While the directories are read, files are immediately deleted.
-   * Once the files in a directory are deleted, the directory itself is deleted.
-   */
-  private void getRecursiveDirList(FwgEntry fwg)
-  {
-    Signal signal = new Signal(30);
-    long start = System.currentTimeMillis();
-    readDirsAndDelete(fwg, anchor_name, signal);
-
-    long end = System.currentTimeMillis();
-    if ((end - start) > 5000)
-      common.ptod("getRecursiveDirList(): it took " + ((end - start) / 1000) +
-                  " seconds to list the directory.");
-  }
-
-
-  /**
-   * Get a directory listing and while doing that, delete all files, followed
-   * by the delete of the directory.
-   */
-  private void readDirsAndDelete(FwgEntry fwg,
-                                 String parent,
-                                 Signal signal)
-  {
-    int invalids = 0;
-
-    /* Go through a list of all files and directories of this parent: */
-    File[] dirptrs = new File(parent).listFiles();
-
-    /* This is likely caused by the use of 'shared=yes' with an other slave */
-    /* deleting this directory.                                             */
-    if (dirptrs == null)
-    {
-      common.ptod("readDirsAndDelete(): directory not found and ignored: " + parent);
-      return;
-    }
-
-    for (File dirptr : dirptrs)
-    {
-      String name = dirptr.getName();
-      //common.ptod("name: " + parent + " " + name);
-
-      if (name.endsWith(InfoFromHost.NO_DISMOUNT_FILE))
-        continue;
-
-      /* Debugging: */
-      // There was an instance where for some reason when trying to delete the
-      // directory there were still lots of files in it????
-      if (!name.startsWith("vdb") && !name.endsWith("file") && !name.endsWith("dir"))
-      {
-        if (invalids++ < 25)
-          common.ptod("readDirsAndDelete(): Invalid file name found and not deleted: " + parent + " " + name);
-        if (invalids == 25)
-          common.ptod("Only the first 25 file/directory names have been reported_this_anchor");
-      }
-
-      /* Only return our own directory and file names. If any other files */
-      /* are left in a directory the directory delete will fail anyway if */
-      /* other files are left.                                            */
-      if (!name.startsWith("vdb"))
-        continue;
-
-      /* Leave the control file around a little bit, but remove debug */
-      /* backup copies:                                               */
-      if (name.endsWith(ControlFile.CONTROL_FILE))
-        continue;
-      if (name.indexOf(ControlFile.CONTROL_FILE) == -1)
-      {
-        if (!name.endsWith(".dir") &&
-            (!name.endsWith(".file") && !name.endsWith(".file.gz")))
-          continue;
-      }
-
-      /* If this is a file, delete it: */
-      if (name.endsWith("file"))
-      {
-        long begin_delete = Native.get_simple_tod();
-        if (!dirptr.delete())
-        {
-          if (!fwg.shared)
-            common.failure("Unable to delete file: " + dirptr.getAbsolutePath());
-          else
-            fwg.blocked.count(Blocked.FILE_DELETE_SHARED);
-        }
-        else
-        {
-
-          FwdStats.count(Operations.DELETE, begin_delete);
-          fwg.blocked.count(Blocked.FILE_DELETES);
-          if (++delete_file_count % 5000 == 0 && signal.go())
-            SlaveJvm.sendMessageToConsole("anchor=%s deleted %,d files; %,d/sec",
-                                          anchor_name, delete_file_count,
-                                          delete_file_count * 1000 / (System.currentTimeMillis() - delete_start));
-        }
-        continue;
-      }
-
-      /* Directories get a recursive call before they are deleted: */
-      readDirsAndDelete(fwg, dirptr.getAbsolutePath(), signal);
-
-      /* Once back here the directory should be empty and can be deleted: */
-      long begin_delete = Native.get_simple_tod();
-      if (!dirptr.delete())
-      {
-        if (!fwg.shared)
-        {
-          common.ptod("");
-          common.ptod("Unable to delete directory: " + dirptr.getAbsolutePath());
-          common.ptod("Are there any files left that were not created by Vdbench?");
-          common.failure("Unable to delete directory: " + parent + File.separator + name +
-                         ". \n\t\tAre there any files left that were not created by Vdbench?");
-        }
-        else
-          fwg.blocked.count(Blocked.DIR_DELETE_SHARED);
-      }
-
-      delete_dir_count++;
-      FwdStats.count(Operations.RMDIR, begin_delete);
-      fwg.blocked.count(Blocked.DIRECTORY_DELETES);
-
-    }
-  }
-
-
   /**
    * Delete all old directories and files.
    * Since this method is synchronized it means that if multiple threads
    * are trying to do this they will be locked out.
+   *
+   * Removed synchronization since introduction of async cleanup
    */
-  public synchronized void cleanupOldFiles(FwgEntry fwg)
+  Signal signal     = null;
+  public void cleanupOldFiles(FwgEntry fwg)
   {
-    /* While a thread was waiting (synchronized abvove) did delete complete? */
-    if (!isDeletePending())
-      return;
-
-    if (!exist())
-      return;
-
-    deleteOldStuff(fwg);
-
-    setDeletePending(false);
-
-    if (getDVMap() != null)
-      getDVMap().eraseMap();
-  }
-
-
-  /**
-   * Recursively list the anchor directory.
-   * As soon as you find a file, delete it. Directories are stored in a Vector
-   * so that they can be deleted later.
-   */
-  public void deleteOldStuff(FwgEntry fwg)
-  {
-
-    /* Start the recusrive directory search: */
-    Signal signal     = new Signal(30);
     delete_file_count = 0;
     delete_dir_count  = 0;
     delete_start      = System.currentTimeMillis();
+    signal            = new Signal(30);
 
-    SlaveJvm.sendMessageToConsole("Starting cleanup for anchor=" + this.anchor_name);
+    //if (!exist())
+    //  return;
 
-    readDirsAndDelete(fwg, anchor_name, signal);
-    double elapsed    = (System.currentTimeMillis() - delete_start) / 1000.;
+    /* Do we even need to cleanup? */
+    if (!isDeletePending())
+      return;
 
-    if (elapsed > 5)
-      common.ptod("deleteOldStuff(): it took " + elapsed +
-                  " seconds to delete all old files and directories.");
-    getRecursiveDirList(fwg);
-
-    if (delete_file_count > 0)
+    /* If this is a OpFormat thread, tell each thread to cleanup those */
+    /* level1 directories assigned to him: */
+    if (Thread.currentThread() instanceof OpFormat)
     {
-      double per_sec = (elapsed == 0) ? 0 : delete_file_count / elapsed;
-      SlaveJvm.sendMessageToConsole("anchor=" + this.anchor_name + " deleted " +
-                                    delete_file_count + " files; " +
-                                    (int) per_sec + "/sec");
+      OpFormat fmt = (OpFormat) Thread.currentThread();
+      fmt.deletePendingLevel1Directories();
+
+      /* Every OpFormat thread now will wait for each other's cleanup: */
+      waitForCleanups();
     }
 
-    if (delete_dir_count > 0)
+
+    /* Finally, clean up the control file and dismount file:           */
+    /* Please note, that even though deleted here, a normal completion */
+    /* of the cleanup will create it again. I can live with that.      */
+    /* Synchronization needed because there may be other threads doing this. */
+    synchronized (this)
     {
-      double per_sec = (elapsed == 0) ? 0 : delete_dir_count / elapsed;
-      SlaveJvm.sendMessageToConsole("anchor=" + this.anchor_name + " deleted " +
-                                    delete_dir_count + " directories; " +
-                                    (int) per_sec + "/sec");
+      File fptr = new File(getAnchorName(), ControlFile.CONTROL_FILE);
+      if (fptr.exists())
+      {
+        if (!fptr.delete())
+          common.failure("Unable to delete control file: " + fptr.getAbsolutePath());
+      }
+      if (fptr.exists())
+        common.failure("Control_file is sticking around????");
     }
 
-    //String asize = "n/a";
-    //try
-    //{
-    //  asize = common.whatSizeX(new File(anchor_name).getUsableSpace(), 1);
-    //}
-    //catch (Exception e)
-    //{
-    //}
-    //SlaveJvm.sendMessageToConsole("anchor=" + this.anchor_name +
-    //                              " Estimated available file system size: " + asize);
-    //SlaveJvm.sendMessageToConsole("anchor=" + this.anchor_name +
-    //                              " Estimated maximum anchor file size:   " +
-    //                              common.whatSizeX(est_max_byte_count, 1));
 
-    /* Finally, clean up the control file: */
-    File fptr = new File(getAnchorName(), ControlFile.CONTROL_FILE);
-    if (fptr.exists())
-    {
-      if (!fptr.delete())
-        common.failure("Unable to delete control file: " + fptr.getAbsolutePath());
-    }
 
     existing_dirs = 0;
+
+    /* We did a cleanup, clear the DV_map. This is needed when a cleanup is done */
+    /* in the middle of multiple RDs. */
+    if (getDVMap() != null)
+      getDVMap().eraseMap();
   }
 
 
@@ -1015,6 +979,7 @@ public class FileAnchor extends Directory implements Serializable
       list_to_use = use_list;
     else
       list_to_use = file_list;
+
 
     /* During journal recovery we first have to read all pending blocks: */
     if (Validate.isJournalRecovery() && pending_files != null )
@@ -1064,6 +1029,7 @@ public class FileAnchor extends Directory implements Serializable
 
             /* See note below under 'sequential' */
             if (debug2) common.ptod("getFile2: null");
+            fwg.work_done = true;
             return null;
           }
 
@@ -1130,6 +1096,7 @@ public class FileAnchor extends Directory implements Serializable
         if (!once_message_sent)
           SlaveJvm.sendMessageToSummary("Reached 'fileselect=once' for anchor %s", anchor_name);
         once_message_sent = true;
+        fwg.work_done = true;
 
         /* There is NO check as there is with SDs that when there are other */
         /* workloads besides 'once', we still terminate after the last of   */
@@ -1192,6 +1159,7 @@ public class FileAnchor extends Directory implements Serializable
       /* we are not doing round-robin. That should be fixed some day.     */
       do
       {
+        //common.ptod("round_robin_dirs: %,6d %,6d", round_robin_dirs, dir_list.size());
         if (round_robin_dirs >= dir_list.size())
         {
           round_robin_dirs = 0;
@@ -1200,7 +1168,14 @@ public class FileAnchor extends Directory implements Serializable
         }
 
         dir = (Directory) dir_list.elementAt(round_robin_dirs++);
-      } while (dir.getDepth() != 1);
+
+        /* Until 50407 this ONLY returned depth == 1 directories.         */
+        /* That depth == 1 check should have only been done during format */
+        if (format && (dir.getDepth() != 1))
+          continue;
+        break;
+
+      } while (true);   ///(dir.getDepth() != 1);
     }
 
     //common.ptod("getDir: rr %6d  sz %3d fmt %b rnd %b %s %d", round_robin_dirs, dir_list.size(),
@@ -2352,6 +2327,69 @@ public class FileAnchor extends Directory implements Serializable
     }
   }
 
+
+  /**
+   * Wait for all OpFormat threads to complete their cleanup.
+   * This is merely done by checking to see if all subdirectories of the anchor
+   * are gone.
+   */
+  private void waitForCleanups()
+  {
+    top:
+    while (isDeletePending())
+    {
+      /* This can happen because of 'format=limited': */
+      if (SlaveJvm.isWorkloadDone())
+        break;
+
+      /* Wait for all directories to be gine: */
+      File[] dirptrs = new File(getAnchorName()).listFiles();
+      for (File dirptr : dirptrs)
+      {
+        //common.ptod("waitForCleanups: " + dirptr.getAbsolutePath());
+        if (dirptr.getName().startsWith("vdb") && dirptr.isDirectory())
+        {
+          common.sleep_some(100);
+          continue top;
+        }
+      }
+
+      setDeletePending(false);
+
+      /* If this anchor is used for cloud stuff then cleanup that too: */
+      if (curl != null)
+      {
+        curl.deleteContainer();
+        curl.createContainer();
+      }
+    }
+  }
+
+  public synchronized void countFileDeletes()
+  {
+    delete_file_count++;
+    if (delete_file_count > 0 && signal.go())
+    {
+      double elapsed    = (System.currentTimeMillis() - delete_start) / 1000.;
+      double per_sec = (elapsed == 0) ? 0 : delete_file_count / elapsed;
+      SlaveJvm.sendMessageToConsole("anchor=" + this.anchor_name + " deleted " +
+                                    delete_file_count + " files; " +
+                                    (int) per_sec + "/sec");
+    }
+  }
+  public synchronized void countDirDeletes()
+  {
+    delete_dir_count++;
+    if (delete_dir_count > 0)
+    {
+      double elapsed    = (System.currentTimeMillis() - delete_start) / 1000.;
+      double per_sec = (elapsed == 0) ? 0 : delete_dir_count / elapsed;
+      SlaveJvm.sendMessageToConsole("anchor=" + this.anchor_name + " deleted " +
+                                    delete_dir_count + " directories; " +
+                                    (int) per_sec + "/sec");
+    }
+  }
+
   public static void main(String[] args)
   {
     FileAnchor anchor = new FileAnchor();
@@ -2372,12 +2410,18 @@ public class FileAnchor extends Directory implements Serializable
 }
 
 
-
-
-
-
-
-
-
-
-
+//   if (delete_file_count > 0)
+//   {
+//     double per_sec = (elapsed == 0) ? 0 : delete_file_count / elapsed;
+//     SlaveJvm.sendMessageToConsole("anchor=" + this.anchor_name + " deleted " +
+//                                   delete_file_count + " files; " +
+//                                   (int) per_sec + "/sec");
+//   }
+//
+//   if (delete_dir_count > 0)
+//   {
+//     double per_sec = (elapsed == 0) ? 0 : delete_dir_count / elapsed;
+//     SlaveJvm.sendMessageToConsole("anchor=" + this.anchor_name + " deleted " +
+//                                   delete_dir_count + " directories; " +
+//                                   (int) per_sec + "/sec");
+//   }

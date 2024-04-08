@@ -59,6 +59,10 @@ class OpSetAttr extends FwgThread
 
       if (!file_ptr.setLastModified(now + YEAR))
       {
+        common.ptod("getFullName(): " + fe.getFullName());
+        common.ptod("canRead:       " + file_ptr.canRead());
+        common.ptod("canWrite:      " + file_ptr.canWrite());
+        common.ptod("canExecute:    " + file_ptr.canExecute());
         common.failure("Unable to do a setattr request for file: " + fe.getFullName());
       }
 

@@ -69,22 +69,29 @@ public class Report
     common.failure("This instantiation only to prevent 'extends Report' compiler message");
   }
 
+  /**
+   * Create a Report instance prefixing the file name with an Object type, e.g.
+   * host.getLabel() or slave.getLabel(), and create the actual report depending
+   * on the create_writer flag.
+   *
+   * The 'title' will be printed as second line on the report.
+   */
+  public Report(Object l1, String fname_in, String title, boolean create_writer)
+  {
+    this(xlate(l1) + "." + fname_in, title, create_writer);
+  }
   public Report(Object l1, String fname_in, String title)
   {
-    this(xlate(l1) + "." + fname_in, title);
+    this(xlate(l1) + "." + fname_in, title, true);
   }
 
+
+  /**
+   * Create a Report instance using the specified file name.
+   */
   public Report(String fname_in, String title)
   {
-    fname = fname_in;
-    if (fname.endsWith(".html"))
-      common.failure("At this point, file name may not include '.html' yet: " + fname);
-    pw    = createHmtlFile(fname, title);
-    all_writers.add(this.pw);
-    all_reports.add(this);
-    writer_filenames.add(fname);
-    data = new ReportData(this);
-    addReport();
+    this(fname_in, title, true);
   }
 
   public Report(String fname_in, String title, boolean create_writer)
@@ -95,6 +102,7 @@ public class Report
 
     if (create_writer)
       pw = createHmtlFile(fname, title);
+
     all_writers.add(this.pw);
     all_reports.add(this);
     writer_filenames.add(fname);
@@ -102,6 +110,11 @@ public class Report
     addReport();
   }
 
+
+  /**
+   * Create a Report instance using an existing PrintWriter instance, which
+   * is the logfile and the totals report.
+   */
   public Report(PrintWriter pw_in, String fnam, String title)
   {
     pw    = pw_in;
@@ -123,9 +136,6 @@ public class Report
   {
     if (fname.indexOf(" ") != -1)
       common.failure("Blank embedded Report name: " + fname);
-
-    if (fname.equals("localhost-0.fsd1"))
-      common.failure("xx");
 
     if (report_map.put(fname, this) != null)
     {
@@ -172,10 +182,10 @@ public class Report
     if (this == Report.getStdoutReport()         &&
         common.get_debug(common.SHORT_FS_STDOUT) &&
         Vdbmain.isFwdWorkload()                  &&
-        txt.length() > 120)
+        txt.length() > 124)
     {
       int len = txt.length();
-      txt = txt.substring(0, 120) + " (" + len + ")";
+      txt = txt.substring(0, 124) + " (" + len + ")";
     }
 
     pw.println(txt);
@@ -308,9 +318,10 @@ public class Report
       report_list.add(report);
       name_list.add(host.getLabel());
 
-      if (hosts.size() > 1)
+      if (host_detail)
       {
-        Report hist = new Report(host.getLabel(), "histogram", "Host response time histogram.");
+        Report hist = new Report(host.getLabel(), "histogram",
+                                 "Host response time histogram.", host_detail);
         report.printHtmlLink("Link to response time histogram", hist.getFileName(), "histogram");
       }
     }
@@ -318,8 +329,8 @@ public class Report
     getSummaryReport().printMultipleLinks(report_list,name_list, "host");
 
     /* Create FWD and FSD detail reports: */
-    Report.createNamedReports(FsdEntry.getFsdNames(), "fsd");
-    Report.createNamedReports(FwdEntry.getFwdNames(), "fwd");
+    Report.createNamedReports(FsdEntry.getFsdNames(), "fsd", sdDetailNeeded());
+    Report.createNamedReports(FwdEntry.getFwdNames(), "fwd", true);
   }
 
   public static void createSlaveSummaryFiles()
@@ -335,10 +346,10 @@ public class Report
         Slave slave = (Slave) slaves.elementAt(j);
         slave.createSummaryFile();
 
-        if (slaves.size() > 1)
+        if (slave_detail)
         {
-          Report hist = new Report(slave.getLabel(),
-                                   "histogram", "Slave response time histogram.");
+          Report hist = new Report(slave.getLabel(), "histogram",
+                                   "Slave response time histogram.", slave_detail);
           slave.getSummaryReport().printHtmlLink("Link to response time histogram",
                                                  hist.getFileName(), "histogram");
         }
@@ -452,6 +463,10 @@ public class Report
       SdReport.createRunSdReports();
       WdReport.createRunWdReports();
     }
+    else
+    {
+      FwdReport.createHostFsdReports();
+    }
 
     if (MiscParms.maintain_run_totals)
       Report.getSummaryReport().printHtmlLink("Cumulative run totals", "totals_optional", "run totals");
@@ -472,7 +487,7 @@ public class Report
   /**
    *  Create Fsd or Fwd reports showing their detail statistics
    */
-  public static void createNamedReports(String names[], String label)
+  public static void createNamedReports(String names[], String label, boolean detail_needed)
   {
     Arrays.sort(names);
     Vector report_list = new Vector(8);
@@ -480,18 +495,17 @@ public class Report
 
     for (int i = 0; i < names.length; i++)
     {
-      Report report = new Report(names[i], "Report for " + label + " " + names[i]);
+      Report report = new Report(names[i], "Report for " + label + " " + names[i], detail_needed);
       report_list.add(report);
       name_list.add(names[i]);
 
       Report histreport = new Report(names[i] + ".histogram",
                                      "Performance histogram for " +
-                                     label.toUpperCase() + "=" + names[i]);
+                                     label.toUpperCase() + "=" + names[i], detail_needed);
 
-      /* For now only create histograms for FSD: */
-      //if (label.equalsIgnoreCase("fsd"))
-      report.printHtmlLink("Link to Performance histogram",
-                           histreport.getFileName(), "histogram");
+      if (detail_needed)
+        report.printHtmlLink("Link to Performance histogram",
+                             histreport.getFileName(), "histogram");
     }
 
     getSummaryReport().printMultipleLinks(report_list, name_list, label);
@@ -666,8 +680,7 @@ public class Report
         LunInfoFromHost linfo = (LunInfoFromHost) luns.get(j);
         for (int k = 0; k < linfo.kstat_error_messages.size(); k++)
         {
-          report.println("host=" + host_names[i] + ",lun=" + linfo.lun +
-                         ": " +
+          report.println("host=" + host_names[i] + ",lun=" + linfo.lun + ": " +
                          (String) linfo.kstat_error_messages.elementAt(k));
           kstat_summary.println("host=" + host_names[i] + ",lun=" + linfo.lun +
                                 ": " +
@@ -686,12 +699,13 @@ public class Report
       for (int j = 0; j < pointers.length; j++)
       {
         InstancePointer ip = pointers[j];
-        report = new Report(host.getLabel() + "." + ip.getID(),
-                            "Host Kstat instance report for host=" + host.getLabel());
+        report = new Report(host, ip.getID(),
+                            "Host Kstat instance report for host=" + host.getLabel(), sd_detail);
         host.addReport(ip.getID(), report);
 
-        host.getKstatReport().printHtmlLink(ip.getLun(), report.getFileName(),
-                                            ip.getInstance());
+        if (sd_detail)
+          host.getKstatReport().printHtmlLink(ip.getLun(), report.getFileName(),
+                                              ip.getInstance());
 
         if (ip.getInstance().startsWith("nfs"))
           NfsStats.setNfsReportsNeeded(true);
@@ -823,6 +837,53 @@ public class Report
   }
 
 
+  private String[] createHeaders(Kstat_cpu kc)
+  {
+    //              int i/o   mb byt rd% rsp rd  wrt rmx wmx std  qd
+    String fmt1 = "%12s %10s %8s %7s %6s %8s %8s %8s %8s %8s %8s %6s ";
+    String fmt2 = "%5s %5s";
+    String hdr1 = String.format(fmt1,        /*           */
+                                "interval",  /*       12  */
+                                "i/o",       /* rate  10  */
+                                "MB/sec",    /*        8  */
+                                "bytes",     /* i/o    7  */
+                                "read",      /* rdpct  6  */
+                                "resp",      /* time   8  */
+                                "read",      /* resp   8  */
+                                "write",     /* resp   8  */
+                                "read",      /* max    8  */
+                                "write",     /* max    8  */
+                                "resp",      /* stddev 8  */
+                                "queue");    /* depth  6  */
+
+    if (kc != null)
+      hdr1 += String.format(fmt2, "cpu%" , "cpu%");
+
+    String hdr2 = String.format(fmt1,
+                                "",
+                                /* i/o    */  "rate",
+                                /* MB/sec */  (binary_or_decimal) ? "1024**2" : "1000**2",
+                                /* bytes  */  "i/o",
+                                /* read   */  "pct",
+                                /* resp   */  "time",
+                                /* read   */  "resp",
+                                /* write  */  "resp",
+                                /* read   */  "max",
+                                /* write  */  "max",
+                                /* resp   */  "stddev",
+                                /* queue  */  "depth");
+
+    if (kc != null)
+      hdr2 += String.format(fmt2, "sys+u" , "sys");
+
+    DateFormat df = new SimpleDateFormat( "MMM dd, yyyy" );
+    String[] tmp = new String[2];
+    tmp[0] = "\n" + df.format(new Date()) + hdr1;
+    tmp[1] = "            "               + hdr2;
+    return tmp;
+  }
+
+
   /**
    * Print one line of simple statistics.
    */
@@ -845,21 +906,23 @@ public class Report
     boolean print_in_microseconds = common.get_debug(common.PRINT_IN_MICROSECONDS);
     int precision = (!print_in_microseconds) ? 1 : 1000000;
     String fmt1   = (!print_in_microseconds) ?
-                    "%10s %10.2f %8.2f %7d %6.2f %8.3f %8.3f %8.3f %8.3f %8.3f %5.1f " :
-                    "%10s %10.2f %8.2f %7d %6.2f %8.0f %8.0f %8.0f %8.0f %8.3f %5.2f ";
+                    //int    i/o    mb byt   rd%  resp  read  wrte  rmax  wmax   std    qd
+                    "%12s %10.1f %8.2f %7d %6.2f %8.3f %8.3f %8.3f %8.2f %8.2f %8.3f %6.1f " :
+                    "%12s %10.1f %8.2f %7d %6.2f %8.0f %8.0f %8.0f %8.0f %8.0f %8.3f %6.2f ";
     String fmt2   = "%5.1f %5.1f";
     String txt    = String.format(fmt1,
-                                  title,                      /*   10s */
-                                  st.rate(),                  /* 10.0f */
+                                  title,                      /*   12s */
+                                  st.rate(),                  /* 10.1f */
                                   st.megabytes(),             /*  8.2f */
                                   st.bytes(),                 /*    7d */
                                   st.readpct(),               /*  6.2f */
                                   st.respTime()  * precision, /*  8.3f */
                                   st.readResp()  * precision, /*  8.3f */
                                   st.writeResp() * precision, /*  8.3f */
-                                  st.respMax()   * precision, /*  8.3f */
+                                  st.readMax()   * precision, /*  8.2f */
+                                  st.writeMax()  * precision, /*  8.2f */
                                   st.resptime_std(),          /*  8.3f */
-                                  st.qdepth());               /*  5.1f */
+                                  st.qdepth());               /*  6.1f */
 
     if (kc != null)
       txt += String.format(fmt2, kc.user_pct() + kc.kernel_pct(), kc.kernel_pct());
@@ -909,7 +972,7 @@ public class Report
 
     if (pw.equals(common.summ_html))
     {
-      common.log_html.println(txt);
+      //common.log_html.println(txt);
       common.stdout.println(txt);
     }
   }
@@ -1132,49 +1195,6 @@ public class Report
       println(kstat_headers);
   }
 
-  private String[] createHeaders(Kstat_cpu kc)
-  {
-    String fmt1 = "%10s %10s %8s %7s %6s %8s %8s %8s %8s %8s %5s ";
-    String fmt2 = "%5s %5s";
-    String hdr1 = String.format(fmt1,        /*           */
-                                "interval",  /*       10  */
-                                "i/o",       /* rate  12  */
-                                "MB/sec",    /*        8  */
-                                "bytes",     /* i/o    7  */
-                                "read",      /* pct    6  */
-                                "resp",      /* time   8  */
-                                "read",      /* resp   8  */
-                                "write",     /* resp   8  */
-                                "resp",      /* max    8  */
-                                "resp",      /* stddev 8  */
-                                "queue");    /* depth  5  */
-
-    if (kc != null)
-      hdr1 += String.format(fmt2, "cpu%" , "cpu%");
-
-    String hdr2 = String.format(fmt1,
-                                "",
-                                /* i/o    */  "rate",
-                                /* MB/sec */  (binary_or_decimal) ? "1024**2" : "1000**2",
-                                /* bytes  */  "i/o",
-                                /* read   */  "pct",
-                                /* resp   */  "time",
-                                /* read   */  "resp",
-                                /* write  */  "resp",
-                                /* resp   */  "max",
-                                /* resp   */  "stddev",
-                                /* queue  */  "depth");
-
-    if (kc != null)
-      hdr2 += String.format(fmt2, "sys+u" , "sys");
-
-    DateFormat df = new SimpleDateFormat( "MMM dd, yyyy" );
-    String[] tmp = new String[2];
-    tmp[0] = "\n" + df.format(new Date()) + hdr1;
-    tmp[1] = "            "               + hdr2;
-    return tmp;
-  }
-
 
   private String createKstatHeaders()
   {
@@ -1301,15 +1321,18 @@ public class Report
       {
         if (pw != null)
         {
-        pw.println(title);
-        pw.println();
+          pw.println(title);
+          pw.println();
         }
       }
     }
 
     /* Keep track of file names and writers for reporting in common.checkerror(): */
-    writer_filenames.add(fptr.getAbsolutePath());
-    all_writers.add(pw);
+    if (!fptr.getName().contains("totals_optional"))
+    {
+      writer_filenames.add(fptr.getAbsolutePath());
+      all_writers.add(pw);
+    }
 
     return pw;
   }
@@ -1397,9 +1420,9 @@ public class Report
   {
     String ret;
     if (ReplayInfo.isReplay())
-      ret = "avg_1-" + highest_interval;
+      ret = " avg_1-" + highest_interval;
     else
-      ret = "avg_" + (Reporter.first_elapsed_interval) + "-" + highest_interval;
+      ret = " avg_" + (Reporter.first_elapsed_interval) + "-" + (highest_interval);
 
     return ret;
   }
@@ -1436,7 +1459,11 @@ public class Report
     Flat.put_col("read_resp",   stats.readResp());
     Flat.put_col("write_resp",  stats.writeResp());
     Flat.put_col("resp_max",    stats.respMax());
+    Flat.put_col("read_max",    stats.readMax());
+    Flat.put_col("write_max",   stats.writeMax());
     Flat.put_col("resp_std",    stats.resptime_std());
+    Flat.put_col("read_std",    stats.readStd());
+    Flat.put_col("write_std",   stats.writeStd());
     Flat.put_col("queue_depth", stats.qdepth());
 
     if (compratio < 0)
@@ -1457,7 +1484,7 @@ public class Report
     Flat.put_col("cpu_user",   cpu_user  );
     Flat.put_col("cpu_kernel", cpu_kernel);
     Flat.put_col("cpu_wait",   cpu_wait  );
-    Flat.put_col("cpu_used",   cpu_user  );
+    Flat.put_col("cpu_used",   cpu_used  );
   }
 
   private static void writeFlatKstat(Kstat_data kd)
@@ -1484,6 +1511,8 @@ public class Report
       else if ("host_detail".startsWith(parms[i]))
         host_detail = true;
       else if ("no_sd_detail".startsWith(parms[i]))
+        sd_detail = false;
+      else if ("no_fsd_detail".startsWith(parms[i]))
         sd_detail = false;
       else
         common.failure("Invalid 'reports=' parameter: " + parms[i]);

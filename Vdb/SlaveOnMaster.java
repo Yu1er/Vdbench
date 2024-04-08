@@ -161,13 +161,16 @@ public class SlaveOnMaster extends ThreadControl
             ErrorLog.ptodSlave(slave, (Vector) sm.getData());
         }
 
+        else if (msgno == SocketMessage.ONE_TIME_STATUS)
+          Status.printOne((String) sm.getData());
+
         else if (msgno == SocketMessage.ERROR_LOG_MESSAGE)
         {
           if (sm.getData() instanceof String)
             ErrorLog.plog(slave.getLabel() + ": " + (String) sm.getData());
           else
             common.failure("ERROR_LOG_MESSAGE tbd");
-            //ErrorLog.printMessagesOnLog(slave.getLabel() + ":", (Vector) sm.getData());
+          //ErrorLog.printMessagesOnLog(slave.getLabel() + ":", (Vector) sm.getData());
         }
 
         else if (msgno == SocketMessage.CONSOLE_MESSAGE)
@@ -201,7 +204,7 @@ public class SlaveOnMaster extends ThreadControl
         }
 
         else if (msgno == SocketMessage.COUNT_ERRORS)
-          ErrorLog.countErrorsOnMaster();
+          ErrorLog.countErrorsOnMaster(slave.getLabel(), (Integer) sm.getData());
 
         /* Heartbeat() takes care of this: */
         else if (msgno == SocketMessage.HEARTBEAT_MESSAGE)
@@ -221,6 +224,9 @@ public class SlaveOnMaster extends ThreadControl
 
         else if (msgno == SocketMessage.ANCHOR_SIZES)
           ((AnchorReport) sm.getData()).printNumbers();
+
+        else if (msgno == SocketMessage.STOP_NEW_IO)
+          SlaveList.stopAllWork();
 
         else
           common.failure("unexpected message from slave: " + sm.getMessageText());
@@ -305,21 +311,34 @@ public class SlaveOnMaster extends ThreadControl
                   slave.getLabel(), delta / 1000);
 
     /* Remember OS type: */
-    slave.getHost().setOS(os_name, os_arch);
+    Host host = slave.getHost();
+    host.setOS(os_name, os_arch);
 
     /* Must have the proper current (master) IP address: */
     if (!master_ip.equals("localhost"))
     {
-      if (!master_ip.equals(common.getCurrentIP()))
+      if (host.master_ip == null)
       {
-        common.ptod("Killing slave: invalid master IP address: " + master_ip + "; expecting: " + common.getCurrentIP());
-        killSlaveSignonError();
-        return null;
+        if (!master_ip.equals(common.getCurrentIP()))
+        {
+          common.ptod("Killing slave: invalid master IP address: " + master_ip + "; expecting: " + common.getCurrentIP());
+          killSlaveSignonError();
+          return null;
+        }
+      }
+      else
+      {
+        if (!master_ip.equals(host.master_ip))
+        {
+          common.ptod("Killing slave: invalid master IP address: " + master_ip + "; expecting: " + host.master_ip);
+          killSlaveSignonError();
+          return null;
+        }
       }
     }
 
     /* We're all happy now. Tell slave that signon is successful. */
-    sm = new SocketMessage(SocketMessage.SEND_SIGNON_SUCCESSFUL);
+    sm = new SocketMessage(SocketMessage.SEND_SIGNON_SUCCESSFUL, common.getProcessId());
     socket_to_slave.putMessage(sm);
 
     /* As a confirmation, wait for this message to come back: */

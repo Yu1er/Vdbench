@@ -9,9 +9,7 @@ package Vdb;
  */
 
 import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Vector;
+import java.util.*;
 
 
 /**
@@ -81,7 +79,19 @@ class StreamContext implements Serializable
   {
     /* First time setting: */
     if (next_lba < 0)
-      next_lba = low_lba;
+    {
+      next_lba    = low_lba;
+
+      /* Either always start at zero or somehwere at a random spot: */
+      if (!cmd.cmd_wg.seek_start0)
+      {
+        long blocks  = (high_lba - low_lba) / cmd.cmd_xfersize;
+        double rnd   = cmd.cmd_wg.seek_randomizer.nextDouble();
+        long   block = (long) (rnd * blocks);
+        next_lba     = block * cmd.cmd_xfersize;
+      }
+      //common.ptod("next_lba: %12d", next_lba);
+    }
 
     /* If this new block won't fit, reset to the beginning: */
     if (next_lba + cmd.cmd_xfersize > high_lba)

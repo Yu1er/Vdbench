@@ -8,11 +8,12 @@ package Utils;
  * Author: Henk Vandenbergh.
  */
 
-import java.util.Vector;
-import java.util.zip.*;
 import java.io.*;
 import java.nio.*;
 import java.nio.channels.*;
+import java.util.ArrayList;
+import java.util.Vector;
+import java.util.zip.*;
 
 /**
  * This class reads data lines from an regular or GZIP file.
@@ -25,6 +26,7 @@ public class Fput
   private String      full_name        = null;
   private PrintWriter pw               = null;
   private int         pw_files_created = 0;
+  private ArrayList <String> lines_printed = null;
 
   private static Vector open_files = new Vector (8, 0);
 
@@ -87,6 +89,14 @@ public class Fput
     }
   }
 
+  public void preserveLines()
+  {
+    lines_printed = new ArrayList(1024);
+  }
+  public ArrayList <String> getPreserves()
+  {
+    return lines_printed;
+  }
 
   /**
    * Close output file
@@ -138,10 +148,16 @@ public class Fput
    */
   public void print(String format, Object ... args)
   {
+    String line = null;
     if (args.length > 0)
-      pw.print(String.format(format, args));
+      line = String.format(format, args);
     else
-      pw.print(format);
+      line = format;
+
+    if (lines_printed != null)
+      lines_printed.add(line);
+
+    pw.print(line);
   }
   public String  println(String format, Object ... args)
   {
@@ -149,6 +165,8 @@ public class Fput
   }
   public String println(String line)
   {
+    if (lines_printed != null)
+      lines_printed.add(line);
     if (pw == null)
     {
       common.ptod("");
@@ -215,6 +233,24 @@ public class Fput
     return null;
   }
 
+  public void printFile(String label)
+  {
+    if (label != null)
+    {
+      Vdb.common.ptod("");
+      Vdb.common.ptod("%s: Fput.printFile for %s", label, getName());
+      for (String line : Fget.readFileToArray(getName()))
+        Vdb.common.ptod("%s: %s", label, line);
+    }
+
+    else
+    {
+      Vdb.common.ptod("");
+      Vdb.common.ptod("Fput.printFile for %s", getName());
+      for (String line : Fget.readFileToArray(getName()))
+        Vdb.common.ptod("%s", line);
+    }
+  }
 
 
   public static void main (String args[]) throws IOException

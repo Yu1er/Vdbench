@@ -144,6 +144,10 @@ public class common
     }
   }
 
+  public static void failure(String format, Object ... args)
+  {
+    failure(String.format(format,args));
+  }
   public static void failure(String txt)
   {
     synchronized(failure_lock)

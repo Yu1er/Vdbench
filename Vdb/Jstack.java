@@ -99,12 +99,9 @@ public class Jstack
       String program = line.substring(line.indexOf(start));
       print("program: pid=" + pidx + " " + program);
 
-      common.ptod("pidx: " + pidx);
-      common.ptod("common.getProcessId(): " + common.getProcessId());
-      System.exit(777);
       if (Integer.parseInt(pidx) == common.getProcessId())
       {
-        common.ptod("Skipping myself");
+        common.ptod("Skipping myself 1");
         continue;
       }
 
@@ -154,7 +151,7 @@ public class Jstack
         System.exit(777);
         if (Integer.parseInt(pidx) == common.getProcessId())
         {
-          common.ptod("Skipping myself");
+          common.ptod("Skipping myself 2");
           continue;
         }
 
@@ -185,7 +182,7 @@ public class Jstack
             String pidx = split[1];
             if (Integer.parseInt(pidx) == common.getProcessId())
             {
-              common.ptod("Skipping myself");
+              common.ptod("Skipping myself 3");
               continue;
             }
 
@@ -404,7 +401,10 @@ public class Jstack
       home = home.substring(0, home.length() - 4);
     print("home: " + home);
 
-    if (common.onWindows() && new File(home + "\\bin\\jstack.exe").exists())
+    if (getopt.check('j'))
+      jstack = getopt.get_string();
+
+    else if (common.onWindows() && new File(home + "\\bin\\jstack.exe").exists())
       jstack = home + "\\bin\\jstack.exe";
 
     else if (new File(home + "/bin/jstack").exists())
@@ -412,9 +412,11 @@ public class Jstack
 
     else
     {
-      common.where();
       if (common.onWindows())
+      {
+        common.failure("Unable to find java/bin/jstack.exe. Rerun using '-j /java/bin/jstack/exe'");
         jstack = "C:\\Program Files\\Java\\jdk1.6.0_10\\bin\\jstack.exe";
+      }
       common.where();
       if (common.onSolaris())
         jstack = "/usr/java/bin/jstack";

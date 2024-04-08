@@ -45,9 +45,12 @@ public class SlaveStats implements Serializable
   private NfsV3        nfs3_delta = null;
   private NfsV4        nfs4_delta = null;
 
+  public  ArrayList <NwAdapter> nw_stats = null;
+
   public  ThreadMonList tmonitor_deltas = new ThreadMonList();
 
-
+  public long permit_time    = 0;
+  public long permit_threads = 0;
 
 
   public SlaveStats(long num)
@@ -103,7 +106,7 @@ public class SlaveStats implements Serializable
   {
     return fsd_map;
   }
-  public HashMap getFwdMap()
+  public HashMap <String, FwdStats> getFwdMap()
   {
     return fwg_map;
   }

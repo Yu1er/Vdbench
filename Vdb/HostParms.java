@@ -99,6 +99,12 @@ public class HostParms
           common.failure("Host '" + current_host.host_ip + "' does not exist");
       }
 
+      else if ("master".startsWith(prm.keyword))
+      {
+        current_host.master_ip = prm.alphas[0];
+        current_host.runHostName();
+      }
+
       else if ("vdbench".startsWith(prm.keyword))
         current_host.host_vdbench = prm.alphas[0];
 

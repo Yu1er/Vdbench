@@ -1,12 +1,12 @@
 package VdbComp;
-    
-/*  
- * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved. 
- */ 
-    
-/*  
- * Author: Henk Vandenbergh. 
- */ 
+
+/*
+ * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.
+ */
+
+/*
+ * Author: Henk Vandenbergh.
+ */
 
 import java.util.Vector;
 import java.text.SimpleDateFormat;
@@ -22,8 +22,8 @@ import Vdb.common;
  */
 class TableWidth
 {
-  private final static String c = 
-  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved."; 
+  private final static String c =
+  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.";
 
   /**
    * Automatically size the columns to the largest element.
@@ -33,7 +33,7 @@ class TableWidth
     int largest = 0;
 
     /* Loop thru rows: */
-    for (int i = 0; i < tbl.getRowCount(); ++i)
+    for (int i = 0; i < tbl.getRowCount(); i++)
     {
       Object value = tbl.getValueAt(i, col);
       if (!(value instanceof String))

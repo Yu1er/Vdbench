@@ -46,6 +46,7 @@ public class SlaveJvm
   private static Semaphore workload_done_semaphore = new Semaphore(0);
   private static Semaphore master_done_semaphore = new Semaphore(0);
   private static boolean workload_done;
+  private static boolean stopping_work = false;
 
 
   private static boolean fwd_workload = false;
@@ -56,6 +57,14 @@ public class SlaveJvm
   private static Mount rd_mount;
 
   private static String master_abort_msg = "Master is aborting. Slave now also terminating";
+
+  /* Owner ID: usually the Master's PID, but when using journal recovery        */
+  /* the very first creator of the journal file(s).                             */
+  /* For those cases where the owner is not set, 'mpid' or 'MPID'.              */
+  /* That situation can legally occur when shared memory is allocated in JNI    */
+  /* for the numerous './vdbench Vdb.xxxx' utility calls that run from VdbMain. */
+  private static int   owner_id   = 0x4d504944;
+  private static int   master_pid = 0x4d504944;
 
 
   public static boolean isThisSlave()
@@ -191,6 +200,15 @@ public class SlaveJvm
 
       else if (sm.getMessageNum() == SocketMessage.REQUEST_SLAVE_STATISTICS)
       {
+        /* Data received from master:       */
+        /* long[0]: request_sequence_number */
+        /* long[1]: last_interval           */
+        /* long[2]: last_warmup             */
+        long[]  info           = (long[]) sm.getData();
+        long    request_number = info[0];
+        boolean last_interval  = info[1] != 0;
+        boolean last_warmup    = info[2] != 0;
+
         Fifo.printFifoStatuses();
 
         if (ThreadMonitor.active())
@@ -204,11 +222,13 @@ public class SlaveJvm
 
         /* Forcing delay in the return of statistics: */
         if (common.get_debug(common.HOLD_UP_STATISTICS) &&
-            sm.getInfo() % 5 == 0)
+            request_number % 5 == 0)
           common.sleep_some(3000);
 
         /* Send all data to the master: */
-        SlaveStats sts = CollectSlaveStats.getStatsForMaster(sm.getInfo());
+        SlaveStats sts = CollectSlaveStats.getStatsForMaster(request_number,
+                                                             last_interval,
+                                                             last_warmup);
         sts.setUserData(userdata);
         sm = new SocketMessage(SocketMessage.SLAVE_STATISTICS, sts);
         socket_to_master.putMessage(sm);
@@ -256,6 +276,9 @@ public class SlaveJvm
 
           if (common.onSolaris())
             NfsStats.getAllNfsDeltasFromKstat();
+
+          if (SlaveWorker.work.nw_monitor_now)
+            NwStats.loadStatistics();
         }
 
       }
@@ -287,6 +310,8 @@ public class SlaveJvm
         SlaveJvm.sendMessageToMaster(SocketMessage.HEARTBEAT_MESSAGE);
       }
 
+      else if (sm.getMessageNum() == SocketMessage.STOP_NEW_IO)
+        stopWork();
 
       else
         common.failure("Unknown socket message: " + sm.getMessageText());
@@ -354,6 +379,7 @@ public class SlaveJvm
 
     if (sm.getMessageNum() != sm.SEND_SIGNON_SUCCESSFUL)
       common.failure("Unexpected message number during signon: " + sm.getMessageNum());
+    owner_id = master_pid = ((Integer) sm.getData()).intValue();
 
     /* Confirm that we received the successful message: */
     socket_to_master.putMessage(sm);
@@ -382,11 +408,11 @@ public class SlaveJvm
     {
       Thread.currentThread().setPriority( Thread.MAX_PRIORITY );
 
-      /* Allocate shared JNI memory right away before we ever call JNI: */
-      Native.allocSharedMemory();
-
       /* Get execution parameters:   */
       scan_args(args);
+
+      /* Needed in case any Native.xxx ends up doing a PTOD: */
+      Native.allocSharedMemory();
 
       /* Slaves will NOT have a logfile.html any longer, everything to stdout: */
       if (SlaveList.getSlaveCount() == 0)
@@ -507,6 +533,53 @@ public class SlaveJvm
     return rd_mount;
   }
 
+
+  /**
+   * Override the owner id.
+   */
+  public static synchronized void setOwnerId(int id)
+  {
+    /* If this is the first time, that's fine, but if a change were made again */
+    /* then we have an not-in-sync issue with journal files!                   */
+    if (owner_id == master_pid)
+    {
+      owner_id = id;
+      SlaveJvm.sendMessageToMaster(SocketMessage.ONE_TIME_STATUS,
+                                   "Data Validation Owner ID found in journal: "+ id);
+      return;
+    }
+
+    /* The next time however, the ID is not allowed to change: */
+    if (id != owner_id)
+    {
+      common.ptod("Current master process id:      " + master_pid);
+      common.ptod("Current owner id:               " + owner_id);
+      common.ptod("Second request to set owner id: " + id);
+      common.failure("Owner ID not in sync, are we mixing up journal files?");
+    }
+  }
+
+  public static int getOwnerId()
+  {
+    return owner_id;
+  }
+
+  /**
+   * Tell all slaves to stop generating new I/O.
+   * Master will send this to everybody.
+   */
+  public synchronized static void stopWork()
+  {
+    if (!stopping_work)
+    {
+      stopping_work = true;
+      SlaveJvm.sendMessageToMaster(SocketMessage.STOP_NEW_IO);
+    }
+  }
+  public static boolean stoppingWork()
+  {
+    return stopping_work;
+  }
 
   public static boolean isWorkloadDone()
   {

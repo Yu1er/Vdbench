@@ -141,22 +141,31 @@ public class Delta extends JTextField
 
 class DeltaValue
 {
+  double value;
   String delta_value;
   Color  color;
 
   /**
    * Create info we need to determine the contents and color of a delta value.
    */
-  public DeltaValue(double value)
+  public DeltaValue(double val)
   {
-    if (value < 0)
-      delta_value = " " + Format.f("%.1f%%",value);
+    value = val;
+    /* This one creates a delta for an empty column: */
+    if (value == Double.NEGATIVE_INFINITY)
+    {
+      delta_value = "";
+      value = 0;
+    }
+
+    else if (value < 0)
+      delta_value = " " + Format.f("%.2f%%",value);
 
     else if (value == 0)
-      delta_value = " " + Format.f("%.1f%%",value);
+      delta_value = " " + Format.f("%.2f%%",value);
 
     else
-      delta_value = "+" + Format.f("%.1f%%",value);
+      delta_value = "+" + Format.f("%.2f%%",value);
 
     Delta[] deltas = Delta.getDeltas();
     for (int i = 0; i < deltas.length; i++)

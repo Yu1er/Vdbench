@@ -1,12 +1,12 @@
 package VdbComp;
-    
-/*  
- * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved. 
- */ 
-    
-/*  
- * Author: Henk Vandenbergh. 
- */ 
+
+/*
+ * Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.
+ */
+
+/*
+ * Author: Henk Vandenbergh.
+ */
 
 import java.awt.*;
 import java.awt.event.*;
@@ -16,17 +16,15 @@ import java.util.*;
 import javax.swing.*;
 import javax.swing.table.*;
 
-import Utils.Fget;
-import Utils.Fput;
-import Utils.common;
+import Utils.*;
 
 /**
  * Workload Comparator menu options.
  */
 public class WlMenus extends JMenuBar implements ActionListener
 {
-  private final static String c = 
-  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved."; 
+  private final static String c =
+  "Copyright (c) 2000, 2012, Oracle and/or its affiliates. All rights reserved.";
 
   private WlComp wlcomp;
 
@@ -34,8 +32,9 @@ public class WlMenus extends JMenuBar implements ActionListener
   private JMenu             file_menu  = new JMenu("File");
   private JMenu             options    = new JMenu("Options");
 
-  private static JCheckBoxMenuItem show_mb    = new JCheckBoxMenuItem("Show MB/sec");
   private JMenuItem         ranges     = new JMenuItem("Modify Color Ranges");
+  private JMenuItem         browse_old = new JMenuItem("Browse old");
+  private JMenuItem         browse_new = new JMenuItem("Browse new");
   private JMenuItem         save       = new JMenuItem("Export ");
   private JMenuItem         exit       = new JMenuItem("Exit");
 
@@ -46,14 +45,16 @@ public class WlMenus extends JMenuBar implements ActionListener
     add(file_menu);
     add(options);
 
-    show_mb.addActionListener(this);
     ranges.addActionListener(this);
     exit.addActionListener(this);
     save.addActionListener(this);
+    browse_old.addActionListener(this);
+    browse_new.addActionListener(this);
 
-    options.add(show_mb);
     options.add(ranges);
     file_menu.add(save);
+    //file_menu.add(browse_old);
+    //file_menu.add(browse_new);
     file_menu.add(exit);
   }
 
@@ -76,127 +77,15 @@ public class WlMenus extends JMenuBar implements ActionListener
       cr.setVisible(true);
     }
 
-    else if (cmd.equals(show_mb.getText()))
-    {
-      wlcomp.clearTable();
-    }
-
     else if (cmd.equals(save.getText()))
-      doExport();
-  }
-
-
-  public static boolean showMB()
-  {
-    return show_mb.isSelected();
-  }
-
-
-  private void doExport()
-  {
-    Vector old_runs = wlcomp.old_runs;
-    Vector new_runs = wlcomp.new_runs;
-    DataModel dm = wlcomp.dm;
-
-    String file_name = wlcomp.getFile();
-    if (file_name == null)
-      return;
-
-    Fput fp = new Fput(file_name);
-    fp.println("Directory\t" +
-               "rd\t" +
-               "oldreqrate\t" +
-               "newreqrate\t" +
-               "oldresp\t" +
-               "newresp\t" +
-               "deltaresp\t" +
-               "oldrate\t" +
-               "newrate\t" +
-               "deltarate\t" +
-               "oldmb\t" +
-               "newmb\t" +
-               "deltamb\t");
-
-    for (int i = 0; i < old_runs.size(); i++)
     {
-      Run old_run = (Run) old_runs.elementAt(i);
-      Run new_run = (Run) new_runs.elementAt(i);
+      String csv = wlcomp.frame.getFile();
+      if (csv == null)
+        return;
 
-      String line = old_run.getSubDir();
-      line += "\t" + old_run.rd_name;
-      line += "\t" + (Double) old_run.flatfile_data.get("reqrate");
-      line += "\t" + (Double) new_run.flatfile_data.get("reqrate");
-      line += "\t" + old_run.flatfile_data.get("resp");
-      line += "\t" + new_run.flatfile_data.get("resp");
-      line += "\t" + new DeltaValue(dm.getDelta(old_run, new_run, "resp")).delta_value;
-      line += "\t" + old_run.flatfile_data.get("rate");
-      line += "\t" + new_run.flatfile_data.get("rate");
-      line += "\t" + new DeltaValue(dm.getDelta(old_run, new_run, "rate")).delta_value;
-      line += "\t" + old_run.flatfile_data.get("MB/sec");
-      line += "\t" + new_run.flatfile_data.get("MB/sec");
-      line += "\t" + new DeltaValue(dm.getDelta(old_run, new_run, "MB/sec")).delta_value;
-      fp.println(line);
+      wlcomp.batchExport(csv);
     }
 
-    fp.close();
   }
 }
 
-  /*
-    if (column_names[col].equalsIgnoreCase("Subdirectory"))
-      return old_run.getSubDir();
-
-    else if (column_names[col].equalsIgnoreCase("Run"))
-      return old_run.rd_name;
-
-
-    else if (column_names[col].equalsIgnoreCase("Old iorate"))
-    {
-      Double num = (Double) old_run.flatfile_data.get("reqrate");
-      if (num.doubleValue() == Vdb.RD_entry.MAX_RATE)
-        return "max";
-      else if (num.doubleValue() == Vdb.RD_entry.CURVE_RATE)
-        return "curve";
-      return num;
-    }
-
-    else if (column_names[col].equalsIgnoreCase("New iorate"))
-    {
-      Double num = (Double) new_run.flatfile_data.get("reqrate");
-      if (num.doubleValue() == Vdb.RD_entry.MAX_RATE)
-        return "max";
-      else if (num.doubleValue() == Vdb.RD_entry.CURVE_RATE)
-        return "curve";
-      return num;
-    }
-
-
-    else if (column_names[col].equalsIgnoreCase("Old resp"))
-      return old_run.flatfile_data.get("resp");
-
-    else if (column_names[col].equalsIgnoreCase("New resp"))
-      return  new_run.flatfile_data.get("resp");
-
-    else if (column_names[col].equalsIgnoreCase("Delta resp"))
-      return new DeltaValue(getDelta(old_run, new_run, "resp"));
-
-
-    else if (column_names[col].equalsIgnoreCase("Old iops"))
-      return  old_run.flatfile_data.get("rate");
-
-    else if (column_names[col].equalsIgnoreCase("New iops"))
-      return  new_run.flatfile_data.get("rate");
-
-    else if (column_names[col].equalsIgnoreCase("Delta iops"))
-      return new DeltaValue(getDelta(old_run, new_run, "rate"));
-
-
-    else if (column_names[col].equalsIgnoreCase("Old mbs"))
-      return  old_run.flatfile_data.get("MB/sec");
-
-    else if (column_names[col].equalsIgnoreCase("New mbs"))
-      return  new_run.flatfile_data.get("MB/sec");
-
-    else if (column_names[col].equalsIgnoreCase("Delta mbs"))
-      return new DeltaValue(getDelta(old_run, new_run, "MB/sec"));
-   */

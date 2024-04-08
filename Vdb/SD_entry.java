@@ -83,6 +83,8 @@ public class SD_entry implements Serializable, Cloneable
 
   long      fhandle;
 
+  boolean   work_done;
+
   long      scsi_lun_reset = 0;
   long      scsi_bus_reset = 0;
   long      scsi_lun_tod   = 0;
@@ -112,6 +114,7 @@ public class SD_entry implements Serializable, Cloneable
   boolean  format_inserted = false;
 
   long     sd_error_count = 0;
+  long     sd_error_time  = 0;
 
   private static Vector          pending_host_parms = new Vector(8, 0);
   private static Vector <String> pending_lun_parms  = new Vector(8, 0);
@@ -971,7 +974,7 @@ public class SD_entry implements Serializable, Cloneable
       //  //  sd.calculateKeyBlockSize();
       //}
       //else if (sd.sd_is_referenced)
-        sd.calculateKeyBlockSize();
+      sd.calculateKeyBlockSize();
     }
   }
   private void calculateKeyBlockSize()
@@ -1218,6 +1221,7 @@ public class SD_entry implements Serializable, Cloneable
 class SdSort implements Comparator
 {
   private static int bad_sds = 0;
+
   public int compare(Object o1, Object o2)
   {
     String sd1;
@@ -1228,6 +1232,8 @@ class SdSort implements Comparator
     {
       sd1 = ((SD_entry) o1).sd_name;
       sd2 = ((SD_entry) o2).sd_name;
+      sd1 = expand(sd1);
+      sd2 = expand(sd2);
     }
     else
     {
@@ -1235,59 +1241,106 @@ class SdSort implements Comparator
       sd2 = (String) o2;
     }
 
-    /* Get everything until we hit a numeric: */
-    String char1 = getLetters(sd1);
-    String char2 = getLetters(sd2);
 
-    /* If these pieces don't match, just do alpha compare: */
-    if (!char1.equalsIgnoreCase(char2))
-      return sd1.compareToIgnoreCase(sd2);
+    sd1 = expand(sd1);
+    sd2 = expand(sd2);
 
-    String r1 = null;
-    String r2 = null;
-    try
-    {
-      /* Get the remainder (numeric?) portion of both values: */
-      r1 = sd1.substring(char1.length());
-      r2 = sd2.substring(char2.length());
-
-      /* If the results is not numberic, again do alpha compare: */
-      if (!common.isNumeric(r1) || !common.isNumeric(r1))
-        return sd1.compareToIgnoreCase(sd2);
-
-      /* Just subtract these numbers and return: */
-      int num1 = Integer.parseInt(r1);
-      int num2 = Integer.parseInt(r2);
-      return num1 - num2;
-    }
-
-    /* Any problem, report five of them: */
-    catch (Exception e)
-    {
-      if (bad_sds++ < 5)
-      {
-        common.ptod("r1: char1: %s char2: %s sd1: %s sd2: %s r1: %s r2: %s",
-                    char1, char2, sd1, sd2, r1, r2);
-        common.ptod(e);
-      }
-    }
-
-    /* Anything down here: just do an alpha compare: */
-    return sd1.compareToIgnoreCase(sd2);
+    return sd1.compareTo(sd2);
   }
 
-  private String getLetters(String sd)
+
+  /**
+   * Expand an RD name to facilitate a mixed numeric/alpha sorting by expanding
+   * any numeric found in the String to an eight digit zero-leading value
+   * E.g.: rd rndwrt16k becomes rndwrt00016384
+   *
+   * This does NOT have to be an RD name, any string will do.
+   */
+  public static String expand(String input)
   {
-    String char1 = "";
-    for (int i = 0; i < sd.length(); i++)
+    try
     {
-      char ch = sd.charAt(i);
-      if (!Character.isLetter(ch))
-        break;
-      char1 += new Character(ch).toString();
+      boolean debug = false;
+      String data    = "";
+      String number  = "";
+      String mask    = "%08d";
+
+      if (debug) common.ptod("arg: " + input);
+
+      for (int i = 0; i < input.length(); i++)
+      {
+        char ch = input.charAt(i);
+        if (ch < '0' || ch > '9')
+        {
+          if (number.length() > 0)
+          {
+            data += String.format(mask, Long.parseLong(number));
+            number = "";
+            if (debug) common.ptod("data0: " + data);
+          }
+          //common.ptod("alp: " + ch);
+          data += ch;
+          if (debug) common.ptod("data1: " + data);
+        }
+        else
+        {
+          number += ch;
+          if (debug) common.ptod("number: " + number);
+
+          /* If the next character is 'k' or 'm', etc. end the number: */
+
+          /* This is the end, just take the value: */
+          if (i+1 == input.length())
+          {
+            data += String.format(mask, Long.parseLong(number));
+            number = "";
+            if (debug) common.ptod("data2: " + data);
+            break;
+          }
+
+          char next = input.charAt(i+1);
+          long mult = 1;
+          if (next == 'k') mult = 1024;
+          else if (next == 'm') mult = 1024*1024;
+          else if (next == 'g') mult = 1024*1024*1024;
+
+          // Removed '8th' does not mean 8tb....
+          //else if (next == 't') mult = 1024*1024*1024*1024l;
+          else
+          {
+            //data += String.format("%05d", Long.parseLong(number));
+            //common.ptod("data3: " + data);
+            //number = "";
+            continue;
+          }
+
+          //run1th_rh_lun
+
+          data += String.format(mask, Long.parseLong(number) * mult);
+          if (debug) common.ptod("data4: " + data);
+          number = "";
+          i++;
+          continue;
+        }
+      }
+
+      /* If we have a pending number, add it: */
+      if (number.length() > 0)
+      {
+        data += String.format(mask, Long.parseLong(number));
+        if (debug) common.ptod("data5: " + data);
+      }
+
+      return data;
     }
 
-    return char1;
+    /* Just in case we have a weird situation: */
+    catch (Exception e)
+    {
+      //common.ptod("input: " + input);
+      return input;
+    }
+
   }
 }
 

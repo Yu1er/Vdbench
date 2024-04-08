@@ -215,6 +215,15 @@ public class MiscParms
         else if (prm.keyword.equals("loop"))
           scanLoopParameter(prm);
 
+        else if ("timeout".startsWith(prm.keyword))
+          Timeout.scanTimeoutParameter(prm.raw_values);
+
+        else if ("ios_per_jvm".startsWith(prm.keyword))
+          RD_entry.IOS_PER_JVM = (int) prm.numerics[0];
+
+        else if ("fwd_thread_adjust".startsWith(prm.keyword))
+          RD_entry.fwd_thread_adjust = prm.alphas[0].startsWith("y");
+
         else
           common.failure("Unknown keyword: " + prm.keyword);
 
@@ -436,7 +445,7 @@ public class MiscParms
     if (!Vdbmain.loop_all_runs)
       return;
 
-    Status.printStatus("Starting loop " + (Vdbmain.loops_done+1), null);
+    Status.printStatus("Starting loop " + (Vdbmain.loops_done+1));
     common.ptod("Starting loop " + (Vdbmain.loops_done+1));
   }
 }
